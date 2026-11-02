@@ -1,6 +1,26 @@
 # Kuluçka Takip
 
-Expo SDK 57, React Native ve Supabase ile Android kuluçka takibi. Müşteri, yumurta kabulü, ödeme ve onaylı SIM SMS gönderimi tek uygulamadadır.
+Kuluçka işletmeleri için geliştirilen Android uygulaması. Müşteri kayıtlarını, yumurta kabullerini, ödemeleri ve SMS bildirimlerini tek yerden takip etmeyi sağlar.
+
+**Sürüm:** 1.1.2 · **Platform:** Android 7+ · **Teknolojiler:** Expo SDK 57, React Native, TypeScript, Supabase
+
+## Özellikler
+
+- **Ana sayfa:** İşletmenin güncel durumunu özetleyen göstergeler.
+- **Müşteri takibi:** Müşteri oluşturma, iletişim bilgileri, kabul geçmişi ve ödeme kayıtları.
+- **Yumurta kabulü:** Müşteri, yumurta türü, ırk ve adet bilgileriyle kayıt oluşturma; kuluçka sürecini ve çıkım tarihlerini takip etme.
+- **Arama ve filtreleme:** Müşteri, telefon, kabul numarası ve yumurta türüyle arama; müşteri, durum, tür ve borç filtrelerini birlikte kullanma.
+- **Ödeme takibi:** Kabul kayıtlarına ödeme ekleme ve kalan borcu görüntüleme.
+- **SMS merkezi:** Mesajları durumlarına göre inceleme, önizleme ve kullanıcı onayıyla Android telefonun SIM hattından gönderme.
+- **Ortak işletme kayıtları:** Yetkili kullanıcıların aynı Supabase verilerine farklı telefonlardan erişmesi.
+
+## Ekran görüntüleri
+
+Uygulamanın gerçek ekran görüntüleri henüz bu depoya eklenmedi. Ana sayfa, müşteri listesi, yumurta kabulü, filtreler ve SMS merkezi görselleri burada paylaşılacak.
+
+## 1.1.2 ile gelenler
+
+Yumurta kayıtlarında birleşik filtreler, Türkçe karakterleri destekleyen arama ve aranabilir seçim listeleri eklendi. Filtre seçimleri ekran yenilenirken ve kayıt detayından dönülürken korunur. Ayrıntılar: [1.1.2 sürüm notları](docs/UPDATE_1.1.2.md).
 
 ## Yeni telefona kurulum
 
@@ -47,4 +67,14 @@ Komut sunucu ayarlarını, TypeScript'i ve testleri kontrol eder; Hermes içeren
 
 ## İnceleme
 
-Temizlik, düzeltmeler ve doğrulama kapsamı: [RELEASE_REVIEW.md](docs/RELEASE_REVIEW.md).
+- [Mimari](docs/ARCHITECTURE.md)
+- [Veritabanı](docs/DATABASE.md)
+- [Tasarım](docs/DESIGN.md)
+- [Performans incelemesi](docs/PERFORMANCE_REVIEW.md)
+- [Dağıtım ve doğrulama kapsamı](docs/RELEASE_REVIEW.md)
+- [1.1.1 sürüm notları](docs/UPDATE_1.1.1.md)
+- [1.1.2 sürüm notları](docs/UPDATE_1.1.2.md)
+
+## Lisans
+
+Lisans koşulları için [LICENSE](LICENSE) dosyasına bakın.
