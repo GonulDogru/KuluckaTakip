@@ -16,7 +16,28 @@ Kuluçka işletmeleri için geliştirilen Android uygulaması. Müşteri kayıtl
 
 ## Ekran görüntüleri
 
-Uygulamanın gerçek ekran görüntüleri henüz bu depoya eklenmedi. Ana sayfa, müşteri listesi, yumurta kabulü, filtreler ve SMS merkezi görselleri burada paylaşılacak.
+<table>
+  <tr>
+    <th>Ana sayfa</th>
+    <th>Müşteriler</th>
+    <th>Yumurta kayıtları</th>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/ana-sayfa.jpeg" alt="Kuluçka Takip ana sayfası" width="260"></td>
+    <td><img src="docs/screenshots/musteriler.jpeg" alt="Müşteri listesi ve borç özetleri" width="260"></td>
+    <td><img src="docs/screenshots/yumurta-kayitlari.jpeg" alt="Yumurta kayıtları, arama ve filtreler" width="260"></td>
+  </tr>
+  <tr>
+    <th>Yeni yumurta kabulü</th>
+    <th>SMS merkezi</th>
+    <th></th>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/yeni-kabul.jpeg" alt="Yeni yumurta kabulü müşteri bilgileri adımı" width="260"></td>
+    <td><img src="docs/screenshots/sms-merkezi.jpeg" alt="SMS merkezi ve mesaj taslakları" width="260"></td>
+    <td></td>
+  </tr>
+</table>
 
 ## 1.1.2 ile gelenler
 
