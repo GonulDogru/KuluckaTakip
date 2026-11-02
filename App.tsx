@@ -1,31 +1,48 @@
-import { useEffect, useState } from 'react';
+import { clearQueryCache } from './src/services/queryCache';
+import { useEffect, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { StatusBar } from 'expo-status-bar';
-import { Text } from 'react-native';
+import { AppState, Platform, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthScreen } from './src/screens/AuthScreen';
 import { authService } from './src/services/authService';
 import { AppNavigator } from './src/navigation/AppNavigator';
-import { isSupabaseConfigured, supabase } from './src/lib/supabase';
-import { Screen } from './src/components/Screen';
+import { isSupabaseConfigured, supabase, readStoredSession } from './src/lib/supabase';
+import { colors } from './src/theme/colors';
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(isSupabaseConfigured);
-  const [accessAllowed, setAccessAllowed] = useState(false);
-  const [accessLoading, setAccessLoading] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
+  const [accessAllowed, setAccessAllowed] = useState(true);
+  const currentUserId = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     if (!supabase) return undefined;
     let mounted = true;
+    let authEventReceived = false;
+    // Restore the local session without waiting for a token refresh request.
+    void readStoredSession().then((stored) => {
+      if (mounted && !authEventReceived && stored) {
+        currentUserId.current = stored.user.id;
+        setSession(stored);
+        setAccessAllowed(true);
+        setAuthLoading(false);
+      }
+    }).catch(() => { /* The SDK remains responsible for session recovery. */ });
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       if (!mounted) return;
+      authEventReceived = true;
+      if (currentUserId.current !== nextSession?.user.id) {
+        clearQueryCache();
+        setAccessAllowed(true);
+      }
+      currentUserId.current = nextSession?.user.id;
       setSession(nextSession);
       setAuthLoading(false);
-      setAccessAllowed(false);
-      setAuthError(null);
+      if (!nextSession) {
+        setAccessAllowed(true);
+      }
     });
 
     return () => {
@@ -35,39 +52,71 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!session || !supabase) {
+    if (!supabase || Platform.OS === 'web') return;
+    const client = supabase;
+    const updateRefresh = (state: string) => {
+      if (state === 'active') void client.auth.startAutoRefresh();
+      else void client.auth.stopAutoRefresh();
+    };
+    updateRefresh(AppState.currentState);
+    const listener = AppState.addEventListener('change', updateRefresh);
+    return () => {
+      listener.remove();
+      void client.auth.stopAutoRefresh();
+    };
+  }, []);
+
+  const userId = session?.user.id;
+
+  useEffect(() => {
+    if (!userId || !supabase) {
       setAccessAllowed(false);
-      setAccessLoading(false);
       return;
     }
     let active = true;
-    setAccessLoading(true);
+    // RLS enforces authorization on every data request; this check only controls UI.
+    setAccessAllowed(true);
     void authService.isAuthorizedUser().then((allowed) => {
       if (active) setAccessAllowed(allowed);
     }).catch(() => {
-      if (active) setAuthError('Uygulama erişim yetkisi doğrulanamadı. Bağlantıyı kontrol edin.');
-    }).finally(() => {
-      if (active) setAccessLoading(false);
+      // Keep the local session on connection errors. RLS still protects all data.
     });
     return () => { active = false; };
-  }, [session]);
+  }, [userId]);
+
+  const demoAllowed = !isSupabaseConfigured && __DEV__;
+  const showNavigator = demoAllowed || Boolean(session && accessAllowed);
+  const showAuthScreen = isSupabaseConfigured
+    && !authLoading
+    && (!session || !accessAllowed);
 
   return (
     <SafeAreaProvider>
-      {!isSupabaseConfigured ? <AppNavigator /> : authLoading || accessLoading ? (
-        <Screen><Text style={{ textAlign: 'center', marginTop: 40 }}>Oturum ve erişim doğrulanıyor...</Text></Screen>
-      ) : authError && !session ? (
-        <AuthScreen accessError={authError} onSignedOut={() => setSession(null)} />
-      ) : session && accessAllowed ? (
-        <AppNavigator />
-      ) : (
+      {showNavigator ? <AppNavigator key={userId ?? 'demo'} /> : null}
+      {showAuthScreen ? (
         <AuthScreen
-          accessDenied={Boolean(session) && !authError}
-          accessError={session ? authError : null}
+          accessDenied={Boolean(session)}
           onSignedOut={() => setSession(null)}
         />
-      )}
-      <StatusBar style="auto" />
+      ) : null}
+      {!isSupabaseConfigured && !demoAllowed ? <View style={styles.loadingOverlay}><Text style={styles.loadingText}>Sunucu yapılandırması eksik. Uygulamayı güncel kurulum paketiyle yeniden yükleyin.</Text></View> : null}
+      {authLoading ? (
+        <View style={styles.loadingOverlay}>
+          <Text style={styles.loadingText}>Uygulama açılıyor...</Text>
+        </View>
+      ) : null}
+      <StatusBar style="dark" />
     </SafeAreaProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  loadingOverlay: {
+    ...StyleSheet.absoluteFill,
+    alignItems: 'center',
+    backgroundColor: colors.background,
+    justifyContent: 'center',
+    zIndex: 1,
+  },
+  loadingText: { color: colors.textMuted, fontWeight: '700' },
+});

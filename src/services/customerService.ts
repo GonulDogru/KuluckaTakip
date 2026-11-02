@@ -1,6 +1,8 @@
+import { readAllRows } from './readAllRows';
+import { cacheReads } from './queryCache';
 import { demoCustomers } from '../data/demoData';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
-import type { Batch, Customer, CustomerSummary, Payment } from '../types/models';
+import type { Customer, CustomerSummary } from '../types/models';
 import { normalizeTurkishPhone } from '../utils/phone';
 import { batchService } from './batchService';
 import { mapCustomer } from './mappers';
@@ -22,46 +24,19 @@ export const customerService = {
       return demoCustomerStore.filter((customer) => options.includeArchived || customer.isActive);
     }
 
-    let query = supabase
-      .from('customers')
-      .select('*')
-      .order('created_at', { ascending: false });
-    if (!options.includeArchived) query = query.eq('is_active', true);
-    const { data, error } = await query;
-    if (error) throw error;
-    return (data ?? []).map(mapCustomer);
+    const client = supabase;
+    const data = await readAllRows((from, to) => {
+      let query = client.from('customers').select('*').order('created_at', { ascending: false }).order('id');
+      if (!options.includeArchived) query = query.eq('is_active', true);
+      return query.range(from, to);
+    });
+    return data.map(mapCustomer);
   },
 
   async listWithSummary(): Promise<CustomerSummary[]> {
-    let customers: Customer[];
-    let batches: Array<Pick<Batch, 'customerId' | 'totalPrice' | 'status'>>;
-    let payments: Array<Pick<Payment, 'customerId' | 'amount'>>;
-
-    if (!isSupabaseConfigured || !supabase) {
-      [customers, batches, payments] = await Promise.all([
-        this.list(),
-        batchService.list(),
-        paymentService.list(),
-      ]);
-    } else {
-      const [customerResult, batchResult, paymentResult] = await Promise.all([
-        this.list(),
-        supabase.from('batches').select('customer_id,total_price,status'),
-        supabase.from('payments').select('customer_id,amount'),
-      ]);
-      if (batchResult.error) throw batchResult.error;
-      if (paymentResult.error) throw paymentResult.error;
-      customers = customerResult;
-      batches = (batchResult.data ?? []).map((batch) => ({
-        customerId: batch.customer_id,
-        totalPrice: Number(batch.total_price),
-        status: batch.status,
-      }));
-      payments = (paymentResult.data ?? []).map((payment) => ({
-        customerId: payment.customer_id,
-        amount: Number(payment.amount),
-      }));
-    }
+    const [customers, batches, payments] = await Promise.all([
+      this.list(), batchService.list(), paymentService.list(),
+    ]);
 
     const batchTotalsByCustomer = new Map<string, { totalPrice: number; activeBatchCount: number }>();
     for (const batch of batches) {
@@ -221,3 +196,5 @@ export const customerService = {
     return customer;
   },
 };
+
+cacheReads(customerService, 'customer', ['list', 'listWithSummary', 'getById', 'findByPhone']);

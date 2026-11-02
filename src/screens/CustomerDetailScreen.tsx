@@ -54,12 +54,12 @@ export function CustomerDetailScreen({ navigation, route }: Props) {
         const [customerData, batchData, paymentData] = await Promise.all([
           customerService.getById(route.params.customerId),
           batchService.listByCustomer(route.params.customerId),
-          paymentService.list(),
+          paymentService.listByCustomer(route.params.customerId),
         ]);
         if (active) {
           setCustomer(customerData);
           setBatches(batchData);
-          setPayments(paymentData.filter((payment) => payment.customerId === route.params.customerId));
+          setPayments(paymentData);
         }
         try {
           const eggTypeData = await eggTypeService.list();
@@ -194,24 +194,24 @@ export function CustomerDetailScreen({ navigation, route }: Props) {
 }
 
 const styles = StyleSheet.create({
-  content: { padding: 18, paddingBottom: 28 },
+  content: { padding: 20, paddingBottom: 28 },
   title: { color: colors.text, fontSize: 30, fontWeight: '900' },
   phone: { color: colors.primary, marginTop: 6, fontWeight: '900' },
   archived: { color: colors.textMuted, marginTop: 8, fontWeight: '800' },
   warning: { color: colors.danger, marginTop: 10, fontWeight: '700' },
   note: { color: colors.textMuted, marginTop: 10, lineHeight: 21 },
   error: { color: colors.danger, textAlign: 'center', margin: 24, fontWeight: '800' },
-  archiveButton: { minHeight: 52, marginTop: 12, borderWidth: 1, borderColor: colors.danger, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  archiveButton: { minHeight: 52, marginTop: 12, borderWidth: 1, borderColor: colors.danger, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   archivePressed: { opacity: 0.75 },
   archiveDisabled: { opacity: 0.55 },
   archiveText: { color: colors.danger, fontSize: 15, fontWeight: '900' },
   grid: { flexDirection: 'row', gap: 12, marginTop: 14 },
   sectionTitle: { color: colors.text, fontSize: 18, fontWeight: '900', marginTop: 24, marginBottom: 10 },
-  paymentRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: colors.surface, borderRadius: 8, borderWidth: 1, borderColor: colors.border, padding: 14, marginBottom: 8 },
+  paymentRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: colors.surface, borderRadius: 18, borderWidth: 1, borderColor: colors.border, padding: 14, marginBottom: 8 },
   paymentDate: { color: colors.text, fontWeight: '900' },
   paymentMethod: { color: colors.textMuted, marginTop: 4, fontSize: 13 },
   paymentAmount: { color: colors.success, fontWeight: '900' },
-  batchCard: { backgroundColor: colors.surface, borderRadius: 8, borderWidth: 1, borderColor: colors.border, padding: 16, marginBottom: 12 },
+  batchCard: { backgroundColor: colors.surface, borderRadius: 18, borderWidth: 1, borderColor: colors.border, padding: 16, marginBottom: 12 },
   batchPressed: { opacity: 0.82 },
   batchTitle: { color: colors.text, fontSize: 17, fontWeight: '900' },
   batchDetails: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 12 },

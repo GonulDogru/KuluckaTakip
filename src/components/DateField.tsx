@@ -9,9 +9,10 @@ type DateFieldProps = {
   value?: string | null;
   onChange: (value: string) => void;
   error?: string;
+  compact?: boolean;
 };
 
-export function DateField({ label, value, onChange, error }: DateFieldProps) {
+export function DateField({ label, value, onChange, error, compact = false }: DateFieldProps) {
   const [showPicker, setShowPicker] = useState(false);
   const pickerValue = dateOnlyToLocalDate(value) ?? dateOnlyToLocalDate(todayLocalDateOnly()) ?? new Date();
 
@@ -30,11 +31,13 @@ export function DateField({ label, value, onChange, error }: DateFieldProps) {
     <View style={styles.wrapper}>
       <Text style={styles.label}>{label}</Text>
       <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${label}: ${formatDateForDisplay(value)}`}
         onPress={() => setShowPicker(true)}
-        style={({ pressed }) => [styles.field, error && styles.fieldError, pressed && styles.pressed]}
+        style={({ pressed }) => [styles.field, compact && styles.compactField, error && styles.fieldError, pressed && styles.pressed]}
       >
-        <Text style={styles.value}>{formatDateForDisplay(value)}</Text>
-        <Text style={styles.icon}>Sec</Text>
+        <Text style={[styles.value, compact && styles.compactValue]}>{formatDateForDisplay(value)}</Text>
+        {!compact ? <Text style={styles.icon}>Seç</Text> : null}
       </Pressable>
       {error ? <Text style={styles.error}>{error}</Text> : null}
       {showPicker ? (
@@ -53,6 +56,8 @@ export function DateField({ label, value, onChange, error }: DateFieldProps) {
 }
 
 const styles = StyleSheet.create({
+  compactField: { paddingHorizontal: 10, gap: 4 },
+  compactValue: { fontSize: 14 },
   wrapper: {
     marginBottom: 14,
   },
@@ -64,7 +69,7 @@ const styles = StyleSheet.create({
   },
   field: {
     minHeight: 52,
-    borderRadius: 8,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.surface,

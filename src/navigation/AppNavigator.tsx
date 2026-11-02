@@ -1,7 +1,13 @@
+import { useEffect } from 'react';
+import { customerService } from '../services/customerService';
+import { batchService } from '../services/batchService';
+import { paymentService } from '../services/paymentService';
+import { eggTypeService } from '../services/eggTypeService';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { Text } from 'react-native';
+import { View } from 'react-native';
+import { AppIcon, type IconName } from '../components/AppIcon';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DashboardScreen } from '../screens/DashboardScreen';
 import { BatchDetailScreen } from '../screens/BatchDetailScreen';
@@ -18,16 +24,13 @@ import type { MainTabParamList, RootStackParamList } from './types';
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabParamList>();
 
-const tabIcons: Record<keyof MainTabParamList, string> = {
-  Dashboard: '⌂',
-  Customers: '○',
-  Parties: '●',
-  SmsCenter: '✉',
+const tabIcons: Record<keyof MainTabParamList, IconName> = {
+  Dashboard: 'home', Customers: 'users', Parties: 'egg', SmsCenter: 'mail',
 };
 
 function MainTabs() {
   const insets = useSafeAreaInsets();
-  const tabBarBaseHeight = 58;
+  const tabBarBaseHeight = 68;
 
   return (
     <Tab.Navigator
@@ -41,6 +44,10 @@ function MainTabs() {
           paddingTop: 6,
           paddingBottom: insets.bottom,
           borderTopColor: colors.border,
+          backgroundColor: colors.surface,
+          borderTopLeftRadius: 22,
+          borderTopRightRadius: 22,
+          elevation: 0,
         },
         tabBarItemStyle: {
           paddingBottom: insets.bottom > 0 ? 2 : 6,
@@ -49,25 +56,35 @@ function MainTabs() {
           fontSize: 11,
           fontWeight: '800',
         },
-        tabBarIcon: ({ color }) => (
-          <Text style={{ color, fontSize: 20, fontWeight: '900' }}>{tabIcons[route.name]}</Text>
+        tabBarIcon: ({ color, focused }) => (
+          <View style={{ width: 52, height: 33, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: focused ? colors.primarySoft : 'transparent' }}><AppIcon name={tabIcons[route.name]} color={color} size={22} /></View>
         ),
       })}
     >
       <Tab.Screen name="Dashboard" component={DashboardScreen} options={{ title: 'Ana Sayfa' }} />
       <Tab.Screen name="Customers" component={CustomersScreen} options={{ title: 'Müşteriler' }} />
-      <Tab.Screen name="Parties" component={PartiesScreen} options={{ title: 'Yumurta Kayıtları' }} />
+      <Tab.Screen name="Parties" component={PartiesScreen} options={{ title: 'Yumurtalar' }} />
       <Tab.Screen name="SmsCenter" component={SmsCenterScreen} options={{ title: 'SMS Merkezi' }} />
     </Tab.Navigator>
   );
 }
 
 export function AppNavigator() {
+  useEffect(() => {
+    // Warm shared data while the user is on home; concurrent requests are shared.
+    void Promise.allSettled([
+      customerService.listWithSummary(),
+      customerService.list({ includeArchived: true }),
+      batchService.list(),
+      paymentService.list(),
+      eggTypeService.list(),
+    ]);
+  }, []);
   return (
     <NavigationContainer>
       <Stack.Navigator
         screenOptions={{
-          headerStyle: { backgroundColor: colors.background },
+          headerStyle: { backgroundColor: colors.surface },
           headerShadowVisible: false,
           headerTintColor: colors.text,
           headerTitleStyle: { fontWeight: '900' },
@@ -77,7 +94,7 @@ export function AppNavigator() {
         <Stack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false }} />
         <Stack.Screen name="CustomerDetail" component={CustomerDetailScreen} options={{ title: 'Müşteri Detayı' }} />
         <Stack.Screen name="NewCustomer" component={NewCustomerScreen} options={{ title: 'Yeni Müşteri' }} />
-        <Stack.Screen name="NewBatch" component={NewBatchScreen} options={{ title: 'Yeni Yumurta Kabul' }} />
+        <Stack.Screen name="NewBatch" component={NewBatchScreen} options={{ title: 'Yumurta kabulü', headerTintColor: colors.primary, headerTitleStyle: { fontSize: 18, fontWeight: '800' } }} />
         <Stack.Screen name="BatchDetail" component={BatchDetailScreen} options={{ title: 'Yumurta Kabulü' }} />
         <Stack.Screen name="SmsPreview" component={SmsPreviewScreen} options={{ title: 'SMS Önizleme' }} />
       </Stack.Navigator>

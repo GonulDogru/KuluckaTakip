@@ -1,6 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useFocusedRefresh } from '../hooks/useFocusedRefresh';
+import { clearQueryCache } from '../services/queryCache';
+import { PageHeading } from '../components/PageHeading';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { DemoModeBadge } from '../components/DemoModeBadge';
 import { PrimaryButton } from '../components/PrimaryButton';
@@ -8,7 +11,6 @@ import { Screen } from '../components/Screen';
 import { TextField } from '../components/TextField';
 import type { RootStackParamList } from '../navigation/types';
 import { customerService } from '../services/customerService';
-import { subscribeDataChanged } from '../services/dataEvents';
 import { colors } from '../theme/colors';
 import type { CustomerSummary } from '../types/models';
 import { formatCurrency } from '../utils/money';
@@ -17,15 +19,17 @@ export function CustomersScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [customers, setCustomers] = useState<CustomerSummary[]>([]);
   const [query, setQuery] = useState('');
+  const loaded = useRef(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async (showLoading = true) => {
     try {
-      if (showLoading) setLoading(true);
+      if (showLoading && !loaded.current) setLoading(true);
       setError(null);
       setCustomers(await customerService.listWithSummary());
+      loaded.current = true;
     } catch {
       setError('Müşteriler yüklenemedi.');
     } finally {
@@ -34,15 +38,10 @@ export function CustomersScreen() {
     }
   }, []);
 
-  useFocusEffect(useCallback(() => { void load(); }, [load]));
-
-  useEffect(() => subscribeDataChanged((event) => {
-    if (event === 'customer' || event === 'batch' || event === 'payment') {
-      void load(false);
-    }
-  }), [load]);
+  useFocusedRefresh(() => { void load(); }, ['customer', 'batch', 'payment', 'eggType']);
 
   const onRefresh = useCallback(() => {
+    clearQueryCache();
     setRefreshing(true);
     void load(false);
   }, [load]);
@@ -65,12 +64,10 @@ export function CustomersScreen() {
         ListHeaderComponent={
           <View>
             <DemoModeBadge />
+            <PageHeading eyebrow="BİRLİKTE BÜYÜYORUZ" title="Müşteriler" subtitle="Müşterilerin, kayıtları ve ödemeleri bir arada." />
             <View style={styles.header}>
-              <View>
-                <Text style={styles.title}>Müşteriler</Text>
-                <Text style={styles.subtitle}>Müşteri borç ve yumurta kabulü özeti.</Text>
-              </View>
-              <PrimaryButton title="Yeni" onPress={() => navigation.navigate('NewCustomer')} />
+              <Text style={styles.listLabel}>{customers.length} müşteri</Text>
+              <PrimaryButton title="+ Yeni müşteri" onPress={() => navigation.navigate('NewCustomer')} />
             </View>
             <TextField label="Ara" value={query} onChangeText={setQuery} placeholder="Ad, soyad veya telefon" />
             {loading ? <Text style={styles.state}>Yükleniyor...</Text> : null}
@@ -83,8 +80,11 @@ export function CustomersScreen() {
             onPress={() => navigation.navigate('CustomerDetail', { customerId: item.id })}
             style={({ pressed }) => [styles.card, pressed && styles.pressed]}
           >
-            <Text style={styles.name}>{item.firstName} {item.lastName}</Text>
-            <Text style={styles.phone}>{item.phone}</Text>
+            <View style={styles.customerTop}>
+              <View style={styles.avatar}><Text style={styles.avatarText}>{item.firstName.slice(0, 1)}{item.lastName.slice(0, 1)}</Text></View>
+              <View style={styles.customerCopy}><Text style={styles.name}>{item.firstName} {item.lastName}</Text><Text style={styles.phone}>{item.phone}</Text></View>
+              <Text style={styles.chevron}>›</Text>
+            </View>
             <View style={styles.row}>
               <Text style={styles.metric}>{item.activeBatchCount} aktif yumurta kabulü</Text>
               <Text style={styles.debt}>{formatCurrency(item.totalDebt)}</Text>
@@ -97,11 +97,15 @@ export function CustomersScreen() {
 }
 
 const styles = StyleSheet.create({
-  content: { padding: 18, paddingBottom: 28 },
+  listLabel: { color: colors.textMuted, fontWeight: '700', fontSize: 12, alignSelf: 'center' },
+  customerTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  customerCopy: { flex: 1 },
+  avatar: { width: 44, height: 44, borderRadius: 16, backgroundColor: colors.primarySoft, alignItems: 'center', justifyContent: 'center' },
+  avatarText: { color: colors.primary, fontWeight: '900', fontSize: 15 },
+  chevron: { color: colors.primary, fontSize: 28 },
+  content: { padding: 20, paddingBottom: 28 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 14 },
-  title: { color: colors.text, fontSize: 30, fontWeight: '900' },
-  subtitle: { color: colors.textMuted, marginTop: 6 },
-  card: { backgroundColor: colors.surface, borderRadius: 8, borderWidth: 1, borderColor: colors.border, padding: 16, marginBottom: 12 },
+  card: { backgroundColor: colors.surface, borderRadius: 18, borderWidth: 1, borderColor: colors.border, padding: 16, marginBottom: 12 },
   pressed: { opacity: 0.82 },
   name: { color: colors.text, fontSize: 18, fontWeight: '900' },
   phone: { color: colors.textMuted, marginTop: 5, fontWeight: '700' },

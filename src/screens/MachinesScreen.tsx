@@ -77,18 +77,18 @@ export function MachinesScreen() {
 }
 
 const styles = StyleSheet.create({
-  content: { padding: 18, paddingBottom: 28 },
+  content: { padding: 20, paddingBottom: 28 },
   header: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, marginBottom: 14 },
   title: { color: colors.text, fontSize: 30, fontWeight: '900' },
   subtitle: { color: colors.textMuted, marginTop: 6 },
-  card: { backgroundColor: colors.surface, borderRadius: 8, borderWidth: 1, borderColor: colors.border, padding: 16, marginBottom: 12 },
+  card: { backgroundColor: colors.surface, borderRadius: 18, borderWidth: 1, borderColor: colors.border, padding: 16, marginBottom: 12 },
   pressed: { opacity: 0.82 },
   row: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
   name: { color: colors.text, fontSize: 18, fontWeight: '900' },
   meta: { color: colors.textMuted, marginTop: 5, fontWeight: '700' },
   percent: { color: colors.primary, fontSize: 20, fontWeight: '900' },
-  bar: { height: 8, borderRadius: 8, backgroundColor: colors.surfaceMuted, marginTop: 14, overflow: 'hidden' },
-  fill: { height: 8, borderRadius: 8, backgroundColor: colors.primary },
+  bar: { height: 8, borderRadius: 18, backgroundColor: colors.surfaceMuted, marginTop: 14, overflow: 'hidden' },
+  fill: { height: 8, borderRadius: 18, backgroundColor: colors.primary },
   capacity: { color: colors.textMuted, marginTop: 10, fontWeight: '700' },
   state: { color: colors.textMuted, textAlign: 'center', marginTop: 24, fontWeight: '700' },
 });

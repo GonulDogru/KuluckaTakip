@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, StyleSheet, Text, TextInput } from 'react-native';
+import { PageHeading } from '../components/PageHeading';
+import { Alert, TextInput } from 'react-native';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -10,7 +11,6 @@ import { Screen } from '../components/Screen';
 import { TextField } from '../components/TextField';
 import type { RootStackParamList } from '../navigation/types';
 import { customerService } from '../services/customerService';
-import { colors } from '../theme/colors';
 import type { Customer } from '../types/models';
 import { formatPhoneInput, normalizeTurkishPhone } from '../utils/phone';
 
@@ -29,6 +29,7 @@ export function NewCustomerScreen({ navigation, route }: Props) {
   const [existingCustomer, setExistingCustomer] = useState<Customer | null>(null);
   const [saving, setSaving] = useState(false);
   const [loadingCustomer, setLoadingCustomer] = useState(Boolean(customerId));
+  const saveLock = useRef(false);
   const lastNameRef = useRef<TextInput>(null);
   const phoneRef = useRef<TextInput>(null);
   const noteRef = useRef<TextInput>(null);
@@ -62,7 +63,8 @@ export function NewCustomerScreen({ navigation, route }: Props) {
   }, [customerId, navigation, reset]);
 
   async function onSubmit(values: FormData) {
-    if (saving) return;
+    if (saveLock.current) return;
+    saveLock.current = true;
     setSaving(true);
     setExistingCustomer(null);
     try {
@@ -88,6 +90,7 @@ export function NewCustomerScreen({ navigation, route }: Props) {
     } catch (error) {
       Alert.alert('Hata', error instanceof Error ? error.message : 'Müşteri kaydedilemedi.');
     } finally {
+      saveLock.current = false;
       setSaving(false);
     }
   }
@@ -95,7 +98,7 @@ export function NewCustomerScreen({ navigation, route }: Props) {
   return (
     <Screen>
       <KeyboardAwareForm>
-          <Text style={styles.title}>{customerId ? 'Müşteri Bilgilerini Düzenle' : 'Yeni Müşteri'}</Text>
+          <PageHeading eyebrow="BİRLİKTE BÜYÜYORUZ" title={customerId ? 'Müşteriyi düzenle' : 'Yeni müşteri'} subtitle="Müşteri bilgilerini kolayca yönet." />
           <Controller control={control} name="firstName" render={({ field }) => (
             <TextField
               label="Ad"
@@ -157,7 +160,3 @@ export function NewCustomerScreen({ navigation, route }: Props) {
     </Screen>
   );
 }
-
-const styles = StyleSheet.create({
-  title: { color: colors.text, fontSize: 30, fontWeight: '900', marginBottom: 12 },
-});

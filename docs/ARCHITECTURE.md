@@ -1,24 +1,16 @@
-# Architecture
+﻿# Mimari
 
-Uygulama katmanları:
+- `App.tsx`: güvenli depodan oturum geri yükleme, arka planda erişim kontrolü ve uygulama yaşam döngüsünde token yenileme. RLS her sunucu isteğinde yetkiyi denetler.
+- `src/lib/supabase.ts`: tek Supabase istemcisi. Native oturum SecureStore'da, web oturumu AsyncStorage'da saklanır. Dağıtım sürümü ayarlar eksikken veri girişine açılmaz.
+- `src/services`: müşteri, parti, ödeme, yumurta türü ve SMS veri erişimi. `readAllRows` sunucu satır sınırına karşı sayfalı okumayı ortaklaştırır. `queryCache` aynı istekleri birleştirir ve sonuçları kısa süre bellekte tutar.
+- `src/services/dataEvents.ts`: yerel yazma sonrası önbellek temizliği ve görünür ekranlara değişiklik bildirimi.
+- `src/hooks/useFocusedRefresh.ts`: görünür listeleri odak, ilgili veri değişikliği ve uygulamaya dönüşte yeniler.
+- `src/utils`: ortak telefon, tarih, para ve SMS durum kuralları.
+- `src/screens` ve `src/components`: ekranlar, ortak form/kart bileşenleri ve beklenmeyen çizim hataları için hata sınırı.
+- `modules/sim-sms`: Android SIM SMS yerel modülü. Mesaj gönderimi JavaScript onayı, sunucu claim'i, lease ve içerik eşleşmesi sonrasında yapılır; bildirim olmadan otomatik yeniden gönderme yoktur.
+- `supabase/migrations`: sıralı şema ve RPC kaynağı. `database/migrations` aynı SQL dosyalarının elle kurulum kopyasıdır. İki dizinin eşitliği incelemede kontrol edildi.
+- `scripts/build-android.ps1`: ortam/test kontrolü, özel kalıcı imza, Android ARM 32/64 bit release APK ve SHA-256 çıktısı.
 
-- `src/lib/supabase.ts`: merkezi Supabase client ve yapılandırma kontrolü
-- `src/services`: componentlerden bağımsız repository/service fonksiyonları
-- `src/utils`: telefon, tarih ve para formatlama yardımcıları
-- `src/data`: Supabase yokken çalışan demo fallback verisi
-- `src/screens`: ekran bileşenleri
-- `src/components`: ortak UI parçaları
+Mevcut menü müşteri, yumurta kabulü, ödeme ve SMS akışlarını sunar. Gerçek makine/raf/yerleşim servisleri ileride kullanılabilmeleri için korunur; mevcut gezgin tarafından sunulmaz. Kullanılmayan ilk taslak bileşenler ve eski demo modelleri kaldırılmıştır. Geliştirmede kalan demo verileri üretimden bağımsızdır; dağıtım sürümü eksik sunucu ayarıyla demo kayda geçmez.
 
-React componentleri doğrudan Supabase sorgusu yazmaz. Veri erişimi `customerService`, `batchService`, `paymentService` ve `eggTypeService` üzerinden yapılır.
-
-Supabase environment değişkenleri yoksa servisler demo bellek verisini kullanır. Böylece Expo Go akışı ve mevcut raf haritası çökmeye devam etmez.
-
-Bu aşamada eklenen operasyon servisleri:
-
-- `machineService`
-- `rackService`
-- `placementService`
-- `hatchBasketService`
-- `dashboardService`
-
-Raf haritası `placement_cells` verisinden matrise dönüştürülür. UI tarafı dolu hücre seçimini engeller; DB tarafı unique constraint ile race condition'a karşı son korumayı sağlar.
+Yetki modeli tek işletmenin birden fazla yetkili kullanıcısıdır. Farklı işletmeler arasında tenant ayrımı bulunmaz. Çevrimdışı yazma kuyruğu ve kabul/ödeme için tek transaction mevcut değildir; ayrıntılar RELEASE_REVIEW.md içindedir.

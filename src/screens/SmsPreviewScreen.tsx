@@ -1,3 +1,4 @@
+import { smsStatusLabel } from '../utils/smsStatus';
 import { useCallback, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -15,19 +16,6 @@ import { formatDateTR } from '../utils/dateRules';
 import { formatTurkishPhone } from '../utils/phone';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'SmsPreview'>;
-
-function statusLabel(status: string) {
-  switch (status.toUpperCase()) {
-    case 'PENDING': return 'Taslak';
-    case 'SENT': return 'Gönderildi';
-    case 'DELIVERED': return 'Teslim edildi';
-    case 'QUEUED': return 'Gönderilecekler listesinde';
-    case 'SENDING': return 'İşlemde / sahiplenilmiş';
-    case 'FAILED': return 'Gönderim başarısız';
-    case 'UNKNOWN': return 'Gönderim sonucu belirsiz';
-    default: return 'Bekliyor';
-  }
-}
 
 export function SmsPreviewScreen({ navigation, route }: Props) {
   const [sms, setSms] = useState<SmsLog | null>(null);
@@ -178,7 +166,7 @@ export function SmsPreviewScreen({ navigation, route }: Props) {
           <Text style={styles.label}>Tahmini çıkım</Text>
           <Text style={styles.value}>{batch?.expectedHatchDate ? formatDateTR(batch.expectedHatchDate) : '—'}</Text>
           <Text style={styles.label}>Durum</Text>
-          <Text style={styles.status}>{statusLabel(sms.status)}</Text>
+          <Text style={styles.status}>{smsStatusLabel(sms.status)}</Text>
         </View>
 
         <Text style={styles.label}>Mesaj</Text>
@@ -241,15 +229,15 @@ export function SmsPreviewScreen({ navigation, route }: Props) {
 }
 
 const styles = StyleSheet.create({
-  content: { padding: 18, paddingBottom: 28 },
+  content: { padding: 20, paddingBottom: 28 },
   title: { color: colors.text, fontSize: 28, fontWeight: '900', marginBottom: 18 },
-  detailsCard: { backgroundColor: colors.surface, borderRadius: 8, borderWidth: 1, borderColor: colors.border, padding: 16, marginBottom: 20 },
+  detailsCard: { backgroundColor: colors.surface, borderRadius: 18, borderWidth: 1, borderColor: colors.border, padding: 16, marginBottom: 20 },
   label: { color: colors.textMuted, fontSize: 13, fontWeight: '800', marginTop: 10, marginBottom: 4 },
   value: { color: colors.text, fontSize: 16, fontWeight: '900' },
   status: { color: colors.accent, fontSize: 15, fontWeight: '900' },
-  messageCard: { minHeight: 110, backgroundColor: colors.surface, borderRadius: 8, borderWidth: 1, borderColor: colors.border, padding: 16 },
+  messageCard: { minHeight: 110, backgroundColor: colors.surface, borderRadius: 18, borderWidth: 1, borderColor: colors.border, padding: 16 },
   message: { color: colors.text, fontSize: 16, lineHeight: 24 },
-  messageInput: { minHeight: 140, backgroundColor: colors.surface, borderRadius: 8, borderWidth: 1, borderColor: colors.primary, padding: 14, color: colors.text, fontSize: 16, lineHeight: 24 },
+  messageInput: { minHeight: 140, backgroundColor: colors.surface, borderRadius: 18, borderWidth: 1, borderColor: colors.primary, padding: 14, color: colors.text, fontSize: 16, lineHeight: 24 },
   actions: { gap: 10, marginVertical: 16 },
   disclaimer: { color: colors.textMuted, textAlign: 'center', marginTop: 14, fontSize: 12, fontWeight: '700' },
   state: { color: colors.textMuted, textAlign: 'center', margin: 24, fontWeight: '700' },

@@ -1,3 +1,5 @@
+import { readAllRows } from './readAllRows';
+import { cacheReads } from './queryCache';
 import { demoPayments } from '../data/demoData';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import type { Payment } from '../types/models';
@@ -26,19 +28,33 @@ export const paymentService = {
       return [...demoPaymentStore];
     }
 
-    const { data, error } = await supabase.from('payments').select('*').order('payment_date', { ascending: false });
-    if (error) throw error;
-    return (data ?? []).map(mapPayment);
+    const client = supabase;
+    const data = await readAllRows((from, to) => client.from('payments').select('*')
+      .order('payment_date', { ascending: false }).order('id').range(from, to));
+    return data.map(mapPayment);
   },
 
   async listByBatch(batchId: string) {
-    const payments = await this.list();
-    return payments.filter((payment) => payment.batchId === batchId);
+    if (!supabase) return demoPaymentStore.filter((payment) => payment.batchId === batchId);
+    const client = supabase;
+    const data = await readAllRows((from, to) => client.from('payments').select('*')
+      .eq('batch_id', batchId).order('payment_date', { ascending: false }).order('id').range(from, to));
+    return data.map(mapPayment);
+  },
+
+  async listByCustomer(customerId: string) {
+    if (!supabase) return demoPaymentStore.filter((payment) => payment.customerId === customerId);
+    const client = supabase;
+    const data = await readAllRows((from, to) => client.from('payments').select('*')
+      .eq('customer_id', customerId).order('payment_date', { ascending: false }).order('id').range(from, to));
+    return data.map(mapPayment);
   },
 
   async getById(id: string) {
-    const payments = await this.list();
-    return payments.find((payment) => payment.id === id) ?? null;
+    if (!supabase) return demoPaymentStore.find((payment) => payment.id === id) ?? null;
+    const { data, error } = await supabase.from('payments').select('*').eq('id', id).maybeSingle();
+    if (error) throw error;
+    return data ? mapPayment(data) : null;
   },
 
   async create(input: CreatePaymentInput) {
@@ -95,3 +111,5 @@ export const paymentService = {
     return totalPrice - this.calculatePaidTotal(payments);
   },
 };
+
+cacheReads(paymentService, 'payment', ['list', 'getById', 'listByBatch', 'listByCustomer']);

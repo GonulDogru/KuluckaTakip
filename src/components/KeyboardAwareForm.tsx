@@ -8,11 +8,12 @@ import {
   type StyleProp,
   StyleSheet,
   type ViewStyle,
+  type View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type KeyboardAwareContextValue = {
-  handleInputFocus: (fieldKey: string) => void;
+  handleInputFocus: (fieldKey: string, field?: View | null) => void;
   registerFieldLayout: (fieldKey: string, event: LayoutChangeEvent) => void;
 };
 
@@ -39,7 +40,14 @@ export function KeyboardAwareForm({ children, bottomPadding = 32, contentContain
     fieldYRef.current[fieldKey] = event.nativeEvent.layout.y;
   }, []);
 
-  const handleInputFocus = useCallback((fieldKey: string) => {
+  const handleInputFocus = useCallback((fieldKey: string, field?: View | null) => {
+    const contentNode = scrollRef.current?.getInnerViewNode();
+    if (field && contentNode) {
+      field.measureLayout(contentNode, (_x, y) => {
+        scrollRef.current?.scrollTo({ y: Math.max(0, y - 80), animated: false });
+      }, () => undefined);
+      return;
+    }
     const fieldY = fieldYRef.current[fieldKey];
     if (fieldY === undefined) return;
 

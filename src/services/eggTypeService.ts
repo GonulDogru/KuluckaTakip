@@ -1,9 +1,36 @@
+import { emitDataChanged } from './dataEvents';
+import { cacheReads } from './queryCache';
 import { demoBreeds, demoEggTypes } from '../data/demoData';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import type { Breed } from '../types/models';
 import { mapEggType } from './mappers';
 
 export const eggTypeService = {
+  async ensureBreed(eggTypeId: string, name: string): Promise<string> {
+    const trimmed = name.trim();
+    if (!supabase) {
+      const existing = demoBreeds.find((breed) => breed.eggTypeId === eggTypeId && breed.name === trimmed);
+      if (existing) return existing.id;
+      const id = `demo-breed-${Date.now()}`;
+      demoBreeds.push({ id, eggTypeId, name: trimmed, active: true, createdAt: new Date().toISOString() });
+      emitDataChanged('eggType');
+      return id;
+    }
+    const { data: existing, error: lookupError } = await supabase.from('breeds').select('id')
+      .eq('egg_type_id', eggTypeId).eq('name', trimmed).maybeSingle();
+    if (lookupError) throw lookupError;
+    if (existing) return existing.id;
+    const { error } = await supabase.from('breeds').upsert(
+      { egg_type_id: eggTypeId, name: trimmed, active: true },
+      { onConflict: 'egg_type_id,name', ignoreDuplicates: true },
+    );
+    if (error) throw error;
+    const { data, error: readError } = await supabase.from('breeds').select('id')
+      .eq('egg_type_id', eggTypeId).eq('name', trimmed).single();
+    if (readError) throw readError;
+    emitDataChanged('eggType');
+    return data.id;
+  },
   async list() {
     if (!isSupabaseConfigured || !supabase) {
       return demoEggTypes.filter((eggType) => eggType.active);
@@ -42,6 +69,7 @@ export const eggTypeService = {
       const now = new Date().toISOString();
       const eggType = { id: `demo-egg-${Date.now()}`, active: true, createdAt: now, ...input };
       demoEggTypes.push(eggType);
+      emitDataChanged('eggType');
       return eggType;
     }
 
@@ -51,6 +79,7 @@ export const eggTypeService = {
       .select('*')
       .single();
     if (error) throw error;
+    emitDataChanged('eggType');
     return mapEggType(data);
   },
 
@@ -59,6 +88,7 @@ export const eggTypeService = {
       const eggType = demoEggTypes.find((item) => item.id === id);
       if (!eggType) return null;
       Object.assign(eggType, input);
+      emitDataChanged('eggType');
       return eggType;
     }
 
@@ -69,6 +99,9 @@ export const eggTypeService = {
       .select('*')
       .single();
     if (error) throw error;
+    emitDataChanged('eggType');
     return mapEggType(data);
   },
 };
+
+cacheReads(eggTypeService, 'eggType', ['list', 'getById', 'listBreeds']);

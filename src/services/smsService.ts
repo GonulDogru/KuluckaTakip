@@ -8,6 +8,7 @@ import { emitDataChanged } from './dataEvents';
 import { getSmsDeviceIdentity } from './smsDeviceIdentity';
 import { isDirectSimSmsAvailable, sendDirectSimSms, type NativeSmsResult } from '../../modules/sim-sms';
 import { normalizeTurkishPhone } from '../utils/phone';
+import { readAllRows } from './readAllRows';
 
 const demoSmsStore: SmsLog[] = [];
 let nextDemoSmsId = 0;
@@ -76,21 +77,22 @@ export function buildHatchSmsMessage({ customer, batch, eggType }: HatchSmsInput
 }
 
 export const smsService = {
-  async list() {
+  async list(): Promise<SmsLog[]> {
     if (!isSupabaseConfigured || !supabase) {
       return [...demoSmsStore].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     }
 
-    const { error: expireError } = await supabase.rpc('expire_sms_claims');
-    if (expireError) throw expireError;
-    const { data, error } = await supabase.from('sms_logs').select(smsLogColumns).order('created_at', { ascending: false });
-    if (error) throw error;
-    return (data ?? []).map(mapSmsLog);
+    const client = supabase;
+    const data = await readAllRows<Record<string, any>>((from, to) => client.rpc('list_sms_logs_with_expired_claims')
+      .order('created_at', { ascending: false }).order('id').range(from, to));
+    return data.map(mapSmsLog);
   },
 
   async getById(id: string) {
-    const smsLogs = await this.list();
-    return smsLogs.find((sms) => sms.id === id) ?? null;
+    if (!supabase) return demoSmsStore.find((sms) => sms.id === id) ?? null;
+    const { data, error } = await supabase.from('sms_logs').select(smsLogColumns).eq('id', id).maybeSingle();
+    if (error) throw error;
+    return data ? mapSmsLog(data) : null;
   },
 
   async createHatchDraft({ customer, batch, eggType }: HatchSmsInput): Promise<HatchSmsDraftResult> {

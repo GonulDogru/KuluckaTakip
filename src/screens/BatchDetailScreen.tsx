@@ -16,7 +16,7 @@ import { paymentService } from '../services/paymentService';
 import { colors } from '../theme/colors';
 import type { Batch, Customer, EggType, Payment } from '../types/models';
 import { calculateBatchDates, formatDateTR, isValidDateOnly } from '../utils/dateRules';
-import { formatCurrency } from '../utils/money';
+import { formatCurrency, parseMoneyInput } from '../utils/money';
 import { todayDateOnly } from '../utils/today';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'BatchDetail'>;
@@ -37,12 +37,15 @@ export function BatchDetailScreen({ navigation, route }: Props) {
   const [editEggCount, setEditEggCount] = useState('');
   const [editIncubationDate, setEditIncubationDate] = useState('');
   const [editNote, setEditNote] = useState('');
+  const paymentLock = useRef(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const saveEditLock = useRef(false);
 
   const load = useCallback(async () => {
+    setLoadError(null);
     const batchData = await batchService.getById(route.params.batchId);
     setBatch(batchData);
-    if (!batchData) return;
+    if (!batchData) throw new Error('Yumurta kaydı bulunamadı.');
     const [customerData, eggTypeOptions, paymentData] = await Promise.all([
       customerService.getById(batchData.customerId),
       eggTypeService.list(),
@@ -54,7 +57,15 @@ export function BatchDetailScreen({ navigation, route }: Props) {
     setPayments(paymentData);
   }, [route.params.batchId]);
 
-  useFocusEffect(useCallback(() => { void load(); }, [load]));
+  useFocusEffect(useCallback(() => {
+    let active = true;
+    void load().catch((error: unknown) => {
+      if (active) setLoadError(error instanceof Error ? error.message : 'Veriler alınamadı. Bağlantınızı kontrol edin.');
+    });
+    return () => { active = false; };
+  }, [load]));
+
+  if (loadError) return <Screen><View style={{ padding: 24, gap: 16 }}><Text style={styles.state}>{loadError}</Text><PrimaryButton title="Tekrar dene" onPress={() => { void load().catch((error: unknown) => setLoadError(error instanceof Error ? error.message : 'Veriler alınamadı.')); }} /></View></Screen>;
 
   if (!batch) return <Screen><Text style={styles.state}>Yükleniyor...</Text></Screen>;
 
@@ -63,12 +74,13 @@ export function BatchDetailScreen({ navigation, route }: Props) {
   const remaining = currentBatch.totalPrice - paid;
 
   async function addPayment() {
-    const amount = Number(paymentAmount.trim().replace(',', '.'));
+    const amount = parseMoneyInput(paymentAmount) ?? 0;
     if (!customer || !Number.isFinite(amount) || amount <= 0) {
       Alert.alert('Uyarı', 'Geçerli bir ödeme tutarı girin.');
       return;
     }
-    if (savingPayment) return;
+    if (paymentLock.current) return;
+    paymentLock.current = true;
 
     setSavingPayment(true);
     try {
@@ -76,11 +88,12 @@ export function BatchDetailScreen({ navigation, route }: Props) {
       setPaymentAmount('');
       setPaymentDate(todayDateOnly());
       setPaymentModal(false);
-      await load();
+      try { await load(); } catch { setLoadError('Ödeme kaydedildi; güncel liste alınamadı. Yenileyin.'); }
       Alert.alert('Tamamlandı', 'Ödeme kaydedildi.');
     } catch (error) {
       Alert.alert('Ödeme eklenemedi', error instanceof Error ? error.message : 'Ödeme kaydedilirken bir hata oluştu.');
     } finally {
+      paymentLock.current = false;
       setSavingPayment(false);
     }
   }
@@ -236,11 +249,11 @@ export function BatchDetailScreen({ navigation, route }: Props) {
 }
 
 const styles = StyleSheet.create({
-  content: { padding: 18, paddingBottom: 28 },
+  content: { padding: 20, paddingBottom: 28 },
   title: { color: colors.text, fontSize: 30, fontWeight: '900', marginTop: 4 },
   grid: { flexDirection: 'row', gap: 12, marginTop: 14 },
   actions: { gap: 10, marginTop: 16 },
-  detailCard: { backgroundColor: colors.surface, borderRadius: 8, borderWidth: 1, borderColor: colors.border, padding: 16, marginTop: 16 },
+  detailCard: { backgroundColor: colors.surface, borderRadius: 18, borderWidth: 1, borderColor: colors.border, padding: 16, marginTop: 16 },
   row: { paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: colors.surfaceMuted },
   label: { color: colors.textMuted, fontSize: 13, fontWeight: '700' },
   value: { color: colors.text, fontSize: 16, fontWeight: '900', marginTop: 3 },
@@ -254,9 +267,9 @@ const styles = StyleSheet.create({
   sheetContent: { padding: 0 },
   sheetTitle: { color: colors.text, fontSize: 22, fontWeight: '900', marginBottom: 8 },
   eggTypeOptions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 14 },
-  eggTypeOption: { minHeight: 44, borderRadius: 8, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, justifyContent: 'center', paddingHorizontal: 14 },
+  eggTypeOption: { minHeight: 44, borderRadius: 18, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, justifyContent: 'center', paddingHorizontal: 14 },
   eggTypeOptionActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   eggTypeOptionText: { color: colors.text, fontWeight: '900' },
   eggTypeOptionTextActive: { color: colors.surface },
-  estimatedDate: { color: colors.textMuted, backgroundColor: colors.surfaceMuted, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 16, fontSize: 16, fontWeight: '800', marginBottom: 14 },
+  estimatedDate: { color: colors.textMuted, backgroundColor: colors.surfaceMuted, borderRadius: 18, paddingHorizontal: 14, paddingVertical: 16, fontSize: 16, fontWeight: '800', marginBottom: 14 },
 });

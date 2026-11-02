@@ -3,7 +3,6 @@ import type { NavigatorScreenParams } from '@react-navigation/native';
 export type RootStackParamList = {
   MainTabs: NavigatorScreenParams<MainTabParamList> | undefined;
   MachineDetail: { machineId: string };
-  ShelfList: { machineId: string };
   ShelfMap: { machineId: string; rackId?: string; highlightBatchId?: string };
   CustomerDetail: { customerId: string };
   NewCustomer: { customerId?: string } | undefined;

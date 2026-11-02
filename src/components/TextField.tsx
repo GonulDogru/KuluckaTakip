@@ -1,4 +1,4 @@
-import { forwardRef, useId } from 'react';
+import { forwardRef, useId, useRef } from 'react';
 import { StyleSheet, Text, TextInput, type KeyboardTypeOptions, type ReturnKeyTypeOptions, View } from 'react-native';
 import { colors } from '../theme/colors';
 import { useKeyboardAwareInput } from './KeyboardAwareForm';
@@ -22,10 +22,13 @@ export const TextField = forwardRef<TextInput, Props>(function TextField(
   ref,
 ) {
   const fieldKey = useId();
+  const wrapperRef = useRef<View>(null);
   const keyboardAware = useKeyboardAwareInput();
 
   return (
     <View
+      ref={wrapperRef}
+      collapsable={false}
       style={styles.wrapper}
       onLayout={(event) => keyboardAware.registerFieldLayout(fieldKey, event)}
     >
@@ -41,7 +44,7 @@ export const TextField = forwardRef<TextInput, Props>(function TextField(
         blurOnSubmit={blurOnSubmit}
         onSubmitEditing={onSubmitEditing}
         onFocus={(event) => {
-          keyboardAware.handleInputFocus(fieldKey);
+          keyboardAware.handleInputFocus(fieldKey, wrapperRef.current);
           onFocus?.(event);
         }}
         style={[styles.input, multiline && styles.multiline, error && styles.inputError]}
@@ -64,11 +67,11 @@ const styles = StyleSheet.create({
   },
   input: {
     minHeight: 52,
-    borderRadius: 8,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.surface,
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     color: colors.text,
     fontSize: 16,
   },

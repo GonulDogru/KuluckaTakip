@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput } from 'react-native';
 import { Screen } from '../components/Screen';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { colors } from '../theme/colors';
+import { authService } from '../services/authService';
 
 type Props = {
   accessDenied?: boolean;
@@ -38,8 +39,7 @@ export function AuthScreen({ accessDenied = false, accessError = null, onSignedO
     setBusy(true);
     setError(null);
     try {
-      const { error: signOutError } = await supabase.auth.signOut();
-      if (signOutError) throw signOutError;
+      await authService.signOut();
       onSignedOut();
     } catch {
       setError('Oturum kapatılamadı. Lütfen tekrar deneyin.');
@@ -50,7 +50,8 @@ export function AuthScreen({ accessDenied = false, accessError = null, onSignedO
 
   return (
     <Screen>
-      <View style={styles.content}>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <Image source={require('../../assets/hatchery-family.png')} style={styles.art} resizeMode="cover" accessible={false} />
         <Text style={styles.title}>Kuluçka Takip</Text>
         {accessDenied || accessError ? (
           <>
@@ -102,17 +103,18 @@ export function AuthScreen({ accessDenied = false, accessError = null, onSignedO
         )}
         {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
         {!isSupabaseConfigured ? <Text style={styles.error}>Supabase yapılandırması bulunamadı.</Text> : null}
-      </View>
+      </ScrollView>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  content: { flex: 1, justifyContent: 'center', padding: 24 },
+  content: { flexGrow: 1, justifyContent: 'center', padding: 24 },
+  art: { width: '100%', height: 190, borderRadius: 26, marginBottom: 22 },
   title: { color: colors.text, fontSize: 30, fontWeight: '900', marginBottom: 12 },
   message: { color: colors.text, fontSize: 16, lineHeight: 23, marginBottom: 18 },
-  input: { minHeight: 52, borderRadius: 8, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, paddingHorizontal: 14, color: colors.text, fontSize: 16, marginBottom: 12 },
-  button: { minHeight: 52, borderRadius: 8, backgroundColor: colors.primary, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 14, marginTop: 4 },
+  input: { minHeight: 52, borderRadius: 18, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, paddingHorizontal: 14, color: colors.text, fontSize: 16, marginBottom: 12 },
+  button: { minHeight: 52, borderRadius: 18, backgroundColor: colors.primary, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 14, marginTop: 4 },
   buttonText: { color: colors.surface, fontSize: 15, fontWeight: '900' },
   disabled: { opacity: 0.55 },
   hint: { color: colors.textMuted, marginTop: 14, lineHeight: 20 },

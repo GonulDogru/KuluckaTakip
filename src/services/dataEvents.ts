@@ -1,4 +1,7 @@
-type DataEvent =
+import { clearQueryCache } from './queryCache';
+
+export type DataEvent =
+  | 'eggType'
   | 'customer'
   | 'batch'
   | 'payment'
@@ -13,6 +16,7 @@ type Listener = (event: DataEvent) => void;
 const listeners = new Set<Listener>();
 
 export function emitDataChanged(event: DataEvent) {
+  clearQueryCache();
   listeners.forEach((listener) => listener(event));
 }
 

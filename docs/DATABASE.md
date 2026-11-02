@@ -45,13 +45,13 @@ Raf ile parti birebir ilişkilendirilmez. Hangi hücrenin hangi partiye ait oldu
 
 ## Yumurta Türleri
 
-`egg_types` tablosunda tür adı, kuluçka süresi (`incubation_days`) ve aktiflik (`active`) tutulur. Uygulama aktif türleri Supabase'den listeler. `20261005170000_seed_egg_types.sql` migration'ı istenen altı türü ad üzerinden idempotent şekilde ekler/günceller ve aktif eder; diğer mevcut kayıtları veya eşleşen kayıtların `transfer_day` değerlerini değiştirmez.
+`egg_types` tablosunda tür adı, kuluçka süresi (`incubation_days`) ve aktiflik (`active`) tutulur. Uygulama aktif türleri Supabase'den listeler. `20261005170000_seed_egg_types.sql` migration'ı istenen altı türü ad üzerinden idempotent şekilde ekler/günceller ve aktif eder; diğer mevcut kayıtları veya eşleşen kayıtların `transfer_day` değerlerini değiştirmez. `20261025200000_duck_incubation_28_days.sql` ördek süresini 28 güne ayarlar; `20261025210000_recalculate_pending_duck_hatch_dates.sql` kuluçkada olan ördek partilerinin tahmini çıkım tarihlerini yeniden hesaplar.
 
 - Tavuk: 21 gün
 - Hindi: 28 gün
 - Bıldırcın: 18 gün
 - Kaz: 30 gün
-- Ördek: 30 gün
+- Ördek: 28 gün
 - Keklik: 25 gün
 
 ## SMS Taslakları

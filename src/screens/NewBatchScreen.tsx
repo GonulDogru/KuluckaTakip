@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { AppIcon } from '../components/AppIcon';
+import { Alert, Keyboard, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Controller, type FieldErrors, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -16,24 +17,18 @@ import { eggTypeService } from '../services/eggTypeService';
 import { paymentService } from '../services/paymentService';
 import { smsService } from '../services/smsService';
 import { colors } from '../theme/colors';
-import type { Customer, EggType } from '../types/models';
+import type { EggType } from '../types/models';
 import { calculateBatchDates, formatDateTR, isValidDateOnly } from '../utils/dateRules';
-import { formatCurrency } from '../utils/money';
+import { formatCurrency, parseMoneyInput } from '../utils/money';
+import { normalizeTurkishPhone } from '../utils/phone';
 import { todayDateOnly } from '../utils/today';
-
-function parseMoneyInput(value: string) {
-  const normalized = value.trim().replace(',', '.');
-  if (normalized === '') return null;
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : null;
-}
 
 const schema = z.object({
   customerName: z.string().trim().min(1, 'Müşteri zorunludur.'),
-  phone: z.string().trim().min(1, 'Telefon zorunludur.'),
+  phone: z.string().trim().refine((value) => Boolean(normalizeTurkishPhone(value)), 'Geçerli bir cep telefonu giriniz.'),
   eggTypeId: z.string().trim().min(1, 'Yumurta türü zorunludur.'),
   breed: z.string().optional(),
-  eggCount: z.string().trim().min(1, 'Yumurta adedi zorunludur.').refine((value) => Number(value) > 0, "Yumurta adedi 0'dan büyük olmalıdır."),
+  eggCount: z.string().trim().refine((value) => Number.isSafeInteger(Number(value)) && Number(value) > 0, 'Yumurta adedi pozitif tam sayı olmalıdır.'),
   receivedDate: z.string().trim().refine((value) => isValidDateOnly(value), 'Geçerli bir kabul tarihi seçiniz.'),
   incubationDate: z.string().optional().refine((value) => !value || isValidDateOnly(value), 'Geçerli bir kuluçkaya giriş tarihi seçiniz.'),
   unitPrice: z.string()
@@ -45,7 +40,7 @@ const schema = z.object({
     }, 'Geçerli bir birim fiyat giriniz.'),
   paidAmount: z.string().refine((value) => {
     const parsed = parseMoneyInput(value);
-    return parsed === null || parsed >= 0;
+    return value.trim() === '' || (parsed !== null && parsed >= 0);
   }, 'Geçerli bir ödenen tutar giriniz.'),
   note: z.string().optional(),
 });
@@ -54,12 +49,15 @@ type FormData = z.infer<typeof schema>;
 type Props = NativeStackScreenProps<RootStackParamList, 'NewBatch'>;
 
 export function NewBatchScreen({ navigation, route }: Props) {
-  const [customers, setCustomers] = useState<Customer[]>([]);
+  const saveLock = useRef(false);
+  const [step, setStep] = useState(0);
+  const [showDetails, setShowDetails] = useState(false);
   const [eggTypes, setEggTypes] = useState<EggType[]>([]);
   const [saving, setSaving] = useState(false);
   const [loadingOptions, setLoadingOptions] = useState(true);
-  const { control, handleSubmit, watch, setValue, formState: { errors } } = useForm<FormData>({
+  const { control, handleSubmit, watch, setValue, trigger, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
+    shouldUnregister: false,
     defaultValues: {
       customerName: '',
       phone: '',
@@ -78,11 +76,12 @@ export function NewBatchScreen({ navigation, route }: Props) {
     let active = true;
     async function load() {
       try {
-        const [customerData, eggTypeData] = await Promise.all([customerService.list(), eggTypeService.list()]);
+        const [preselected, eggTypeData] = await Promise.all([
+          route.params?.customerId ? customerService.getById(route.params.customerId) : Promise.resolve(null),
+          eggTypeService.list(),
+        ]);
         if (!active) return;
-        setCustomers(customerData);
         setEggTypes(eggTypeData);
-        const preselected = route.params?.customerId ? customerData.find((customer) => customer.id === route.params?.customerId) : null;
         if (preselected) {
           setValue('customerName', `${preselected.firstName} ${preselected.lastName}`);
           setValue('phone', preselected.phone);
@@ -102,12 +101,36 @@ export function NewBatchScreen({ navigation, route }: Props) {
   }, [route.params?.customerId, setValue]);
 
   const values = watch();
+  useEffect(() => {
+    if (!normalizeTurkishPhone(values.phone)) return;
+    let active = true;
+    const timer = setTimeout(() => {
+      void customerService.findByPhone(values.phone).then((customer) => {
+        if (active && customer) setValue('customerName', `${customer.firstName} ${customer.lastName}`);
+      }).catch(() => { /* Saving validates the lookup and reports any connection error. */ });
+    }, 300);
+    return () => { active = false; clearTimeout(timer); };
+  }, [values.phone, setValue]);
+
   const unitPricePreview = parseMoneyInput(values.unitPrice) ?? 0;
   const totalPrice = Number(values.eggCount || 0) * unitPricePreview;
   const selectedEggType = eggTypes.find((eggType) => eggType.id === values.eggTypeId);
   const expectedHatchDate = calculateBatchDates(values.incubationDate, selectedEggType).expectedHatchDate;
 
+  async function nextStep() {
+    const fields: (keyof FormData)[] = step === 0
+      ? ['phone', 'customerName']
+      : ['eggTypeId', 'eggCount', 'receivedDate', 'incubationDate'];
+    if (await trigger(fields, { shouldFocus: true })) {
+      Keyboard.dismiss();
+      setStep(Math.min(2, step + 1));
+    }
+  }
+
   function onInvalid(formErrors: FieldErrors<FormData>) {
+    if (formErrors.phone || formErrors.customerName) setStep(0);
+    else if (formErrors.eggTypeId || formErrors.eggCount || formErrors.receivedDate || formErrors.incubationDate) setStep(1);
+    else setStep(2);
     const firstMessage = Object.values(formErrors).find((error) => error?.message)?.message;
     Alert.alert(
       'Eksik veya hatalı bilgi',
@@ -116,7 +139,8 @@ export function NewBatchScreen({ navigation, route }: Props) {
   }
 
   async function onSubmit(form: FormData) {
-    if (saving) return;
+    if (saveLock.current) return;
+    saveLock.current = true;
     setSaving(true);
     try {
       const unitPrice = parseMoneyInput(form.unitPrice);
@@ -142,8 +166,10 @@ export function NewBatchScreen({ navigation, route }: Props) {
         });
       }
 
+      const breedId = form.breed?.trim() ? await eggTypeService.ensureBreed(form.eggTypeId, form.breed) : null;
       const batch = await batchService.create({
         customerId: customer.id,
+        breedId,
         eggTypeId: form.eggTypeId,
         eggCount: Number(form.eggCount),
         receivedDate: form.receivedDate,
@@ -152,15 +178,20 @@ export function NewBatchScreen({ navigation, route }: Props) {
         note: form.note,
       });
 
+      let paymentWarning = '';
       if (paidAmount > 0) {
-        await paymentService.create({
+        try {
+          await paymentService.create({
           customerId: customer.id,
           batchId: batch.id,
           amount: paidAmount,
           paymentMethod: 'Nakit',
           paymentDate: form.receivedDate,
           note: 'Yumurta kabul ödemesi',
-        });
+          });
+        } catch {
+          paymentWarning = 'Ödeme kaydedilemedi. Kabul kaydı oluşturuldu; aynı kabulü yeniden eklemeyin. Ödemeyi kabul detayından kontrol edip ekleyin.\n\n';
+        }
       }
 
       const eggType = eggTypes.find((item) => item.id === form.eggTypeId);
@@ -176,10 +207,10 @@ export function NewBatchScreen({ navigation, route }: Props) {
       }
       Alert.alert(
         'Yumurta kabulü kaydedildi',
-        smsDraftMessage,
+        paymentWarning + smsDraftMessage,
         [
           { text: 'Kabul Detayı', onPress: () => navigation.replace('BatchDetail', { batchId: batch.id }) },
-          { text: 'SMS Merkezi', onPress: () => navigation.navigate('MainTabs', { screen: 'SmsCenter' }) },
+          { text: 'SMS Merkezi', onPress: () => navigation.popTo('MainTabs', { screen: 'SmsCenter' }) },
         ],
         { cancelable: false },
       );
@@ -189,77 +220,121 @@ export function NewBatchScreen({ navigation, route }: Props) {
       }
       Alert.alert('Hata', error instanceof Error ? error.message : 'Yumurta kabulü kaydedilemedi.');
     } finally {
+      saveLock.current = false;
       setSaving(false);
     }
   }
 
   return (
-    <Screen>
-      <KeyboardAwareForm>
-        <Text style={styles.title}>Yeni Yumurta Kabul</Text>
-        <Controller control={control} name="phone" render={({ field }) => (
-          <TextField label="Telefon" value={field.value} onChangeText={async (value) => {
-            field.onChange(value);
-            const customer = await customerService.findByPhone(value);
-            if (customer) setValue('customerName', `${customer.firstName} ${customer.lastName}`);
-          }} keyboardType="phone-pad" error={errors.phone?.message} />
-        )} />
-        <Controller control={control} name="customerName" render={({ field }) => (
-          <TextField label="Müşteri" value={field.value} onChangeText={field.onChange} error={errors.customerName?.message} />
-        )} />
-        <Text style={styles.label}>Yumurta türü</Text>
-        {loadingOptions ? <Text style={styles.optionsState}>Yumurta türleri yükleniyor...</Text> : null}
-        {!loadingOptions && eggTypes.length === 0 ? <Text style={styles.errorText}>Aktif yumurta türü bulunamadı.</Text> : null}
-        <View style={styles.options}>
-          {eggTypes.map((eggType) => (
-            <Pressable key={eggType.id} onPress={() => setValue('eggTypeId', eggType.id)} style={[styles.option, values.eggTypeId === eggType.id && styles.optionActive]}>
-              <Text style={[styles.optionText, values.eggTypeId === eggType.id && styles.optionTextActive]}>{eggType.name}</Text>
-            </Pressable>
-          ))}
+    <Screen edges={['left', 'right', 'bottom']}>
+      <KeyboardAwareForm key={step} bottomPadding={20}>
+        <View style={styles.steps}>
+          {['Müşteri', 'Yumurta', 'Ödeme'].map((title, index) => <View key={title} accessibilityLabel={`Adım ${index + 1}: ${title}${index === step ? ', geçerli adım' : ''}`} style={[styles.step, index === step && styles.activeStep]}>
+            <View style={[styles.stepNumber, index <= step && styles.activeNumber]}><Text style={[styles.numberText, index <= step && styles.activeNumberText]}>{index + 1}</Text></View>
+            <Text style={[styles.stepText, index === step && styles.activeStepText]}>{title}</Text>
+          </View>)}
         </View>
-        {errors.eggTypeId?.message ? <Text style={styles.errorText}>{errors.eggTypeId.message}</Text> : null}
-        <Controller control={control} name="breed" render={({ field }) => (
-          <TextField label="Irk" value={field.value ?? ''} onChangeText={field.onChange} placeholder="Opsiyonel" />
-        )} />
-        <Controller control={control} name="eggCount" render={({ field }) => (
-          <TextField label="Yumurta adedi" value={field.value} onChangeText={field.onChange} keyboardType="number-pad" error={errors.eggCount?.message} />
-        )} />
-        <Controller control={control} name="receivedDate" render={({ field }) => (
-          <DateField label="Kabul Tarihi" value={field.value} onChange={field.onChange} error={errors.receivedDate?.message} />
-        )} />
-        <Controller control={control} name="incubationDate" render={({ field }) => (
-          <DateField label="Kuluçkaya Giriş Tarihi" value={field.value} onChange={field.onChange} error={errors.incubationDate?.message} />
-        )} />
-        <Text style={styles.label}>Tahmini Çıkım Tarihi</Text>
-        <Text accessibilityLabel="Tahmini çıkım tarihi" style={styles.estimatedDate}>
-          {expectedHatchDate ? formatDateTR(expectedHatchDate) : '—'}
-        </Text>
-        <Controller control={control} name="unitPrice" render={({ field }) => (
-          <TextField label="Birim fiyat" value={field.value} onChangeText={field.onChange} keyboardType="decimal-pad" error={errors.unitPrice?.message} />
-        )} />
-        <Text style={styles.preview}>Toplam fiyat: {formatCurrency(totalPrice)}</Text>
-        <Controller control={control} name="paidAmount" render={({ field }) => (
-          <TextField label="Ödenen tutar" value={field.value} onChangeText={field.onChange} keyboardType="decimal-pad" error={errors.paidAmount?.message} />
-        )} />
-        <Controller control={control} name="note" render={({ field }) => (
-          <TextField label="Not" value={field.value ?? ''} onChangeText={field.onChange} multiline />
-        )} />
-        <PrimaryButton title={saving ? 'Kaydediliyor...' : 'Yumurta Kabulünü Kaydet'} onPress={handleSubmit(onSubmit, onInvalid)} disabled={saving || loadingOptions || eggTypes.length === 0} />
+
+        {step === 0 ? <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Müşteri bilgileri</Text>
+          <Text style={styles.sectionHint}>Telefon kayıtlıysa müşteri adı otomatik gelir.</Text>
+          <Controller control={control} name="phone" render={({ field }) => <TextField label="Cep telefonu" value={field.value} onChangeText={field.onChange} keyboardType="phone-pad" placeholder="05xx xxx xx xx" error={errors.phone?.message} />} />
+          <Controller control={control} name="customerName" render={({ field }) => <TextField label="Müşteri adı soyadı" value={field.value} onChangeText={field.onChange} error={errors.customerName?.message} />} />
+        </View> : null}
+
+        {step === 1 ? <>
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Yumurta bilgileri</Text>
+            <Text style={styles.label}>Yumurta türü</Text>
+            {loadingOptions ? <Text style={styles.hint}>Türler yükleniyor...</Text> : null}
+            {!loadingOptions && eggTypes.length === 0 ? <Text style={styles.errorText}>Aktif yumurta türü bulunamadı.</Text> : null}
+            <View style={styles.options}>{eggTypes.map((eggType) => <Pressable key={eggType.id} accessibilityRole="radio" accessibilityState={{ checked: values.eggTypeId === eggType.id }} onPress={() => setValue('eggTypeId', eggType.id, { shouldValidate: true })} style={[styles.option, values.eggTypeId === eggType.id && styles.optionActive]}><Text style={[styles.optionText, values.eggTypeId === eggType.id && styles.optionTextActive]}>{eggType.name}</Text></Pressable>)}</View>
+            {errors.eggTypeId?.message ? <Text style={styles.errorText}>{errors.eggTypeId.message}</Text> : null}
+            <Controller control={control} name="eggCount" render={({ field }) => <TextField label="Yumurta adedi" value={field.value} onChangeText={field.onChange} keyboardType="number-pad" placeholder="Örn. 100" error={errors.eggCount?.message} />} />
+            <View style={styles.row}>
+              <View style={styles.column}><Controller control={control} name="receivedDate" render={({ field }) => <DateField compact label="Kabul tarihi" value={field.value} onChange={field.onChange} error={errors.receivedDate?.message} />} /></View>
+              <View style={styles.column}><Controller control={control} name="incubationDate" render={({ field }) => <DateField compact label="Kuluçka tarihi" value={field.value} onChange={field.onChange} error={errors.incubationDate?.message} />} /></View>
+            </View>
+            <View style={styles.datePreview}><AppIcon name="egg" size={18} color={colors.primary} /><Text style={styles.dateText}>{expectedHatchDate ? `Tahmini çıkım: ${formatDateTR(expectedHatchDate)}` : 'Kuluçka tarihi seçilince çıkım hesaplanır.'}</Text></View>
+            {values.incubationDate ? <Pressable accessibilityRole="button" onPress={() => setValue('incubationDate', '', { shouldValidate: true })} style={styles.clearDate}><Text style={styles.link}>Kuluçka tarihini kaldır</Text></Pressable> : null}
+          </View>
+          <Pressable accessibilityRole="button" accessibilityState={{ expanded: showDetails }} onPress={() => setShowDetails((current) => !current)} style={styles.detailsToggle}><View><Text style={styles.detailsTitle}>Irk ve not {values.breed || values.note ? '•' : ''}</Text><Text style={styles.hint}>İsteğe bağlı ayrıntılar</Text></View><Text style={styles.toggleIcon}>{showDetails ? '−' : '+'}</Text></Pressable>
+          {showDetails ? <View style={styles.card}>
+            <Controller control={control} name="breed" render={({ field }) => <TextField label="Irk" value={field.value ?? ''} onChangeText={field.onChange} placeholder="İsteğe bağlı" />} />
+            <Controller control={control} name="note" render={({ field }) => <TextField label="Not" value={field.value ?? ''} onChangeText={field.onChange} multiline placeholder="Bu kabulle ilgili kısa not" />} />
+          </View> : null}
+        </> : null}
+
+        {step === 2 ? <>
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Ücret ve ödeme</Text>
+            <View style={styles.row}>
+              <View style={styles.column}><Controller control={control} name="unitPrice" render={({ field }) => <TextField label="Birim fiyat (TL)" value={field.value} onChangeText={field.onChange} keyboardType="decimal-pad" placeholder="0,00" error={errors.unitPrice?.message} />} /></View>
+              <View style={styles.column}><Controller control={control} name="paidAmount" render={({ field }) => <TextField label="Ödenen (TL)" value={field.value} onChangeText={field.onChange} keyboardType="decimal-pad" placeholder="0,00" error={errors.paidAmount?.message} />} /></View>
+            </View>
+            <View style={styles.totalRow}><Text style={styles.totalLabel}>Toplam tutar</Text><Text style={styles.total}>{formatCurrency(totalPrice)}</Text></View>
+            <View style={styles.balanceRow}><Text style={styles.hint}>Kalan tutar</Text><Text style={styles.balance}>{formatCurrency(totalPrice - (parseMoneyInput(values.paidAmount) ?? 0))}</Text></View>
+          </View>
+          <View style={styles.summary}>
+            <Text style={styles.summaryLabel}>KABUL ÖZETİ</Text>
+            <Text style={styles.summaryName}>{values.customerName}</Text>
+            <Text style={styles.summaryText}>{values.eggCount} adet · {selectedEggType?.name}</Text>
+            <Text style={styles.summaryText}>Kabul: {formatDateTR(values.receivedDate)}</Text>
+            <Text style={styles.summaryText}>Çıkım: {expectedHatchDate ? formatDateTR(expectedHatchDate) : 'Henüz planlanmadı'}</Text>
+            {values.breed ? <Text style={styles.summaryText}>Irk: {values.breed}</Text> : null}
+            {values.note ? <Text numberOfLines={2} style={styles.summaryText}>Not: {values.note}</Text> : null}
+          </View>
+        </> : null}
+
+        <View style={styles.buttons}>
+          {step > 0 ? <View style={styles.back}><PrimaryButton title="Geri" variant="secondary" onPress={() => { Keyboard.dismiss(); setStep((current) => current - 1); }} disabled={saving} /></View> : null}
+          <View style={styles.next}>{step < 2 ? <PrimaryButton title={step === 0 ? 'Yumurta bilgileri →' : 'Ödemeye geç →'} onPress={() => { void nextStep(); }} disabled={loadingOptions || eggTypes.length === 0} /> : <PrimaryButton title={saving ? 'Kaydediliyor...' : 'Kabulü kaydet'} onPress={handleSubmit(onSubmit, onInvalid)} disabled={saving || loadingOptions || eggTypes.length === 0} />}</View>
+        </View>
       </KeyboardAwareForm>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  title: { color: colors.text, fontSize: 30, fontWeight: '900', marginBottom: 12 },
-  label: { color: colors.text, fontSize: 13, fontWeight: '900', marginBottom: 6 },
-  options: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 14 },
-  optionsState: { color: colors.textMuted, marginBottom: 10, fontWeight: '700' },
-  estimatedDate: { color: colors.textMuted, backgroundColor: colors.surfaceMuted, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 16, fontSize: 16, fontWeight: '800', marginBottom: 14 },
-  option: { minHeight: 44, borderRadius: 8, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, justifyContent: 'center', paddingHorizontal: 14 },
+  steps: { flexDirection: 'row', gap: 7, marginBottom: 18 },
+  step: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 11, borderRadius: 14, backgroundColor: colors.surface },
+  activeStep: { backgroundColor: colors.primarySoft },
+  stepNumber: { width: 22, height: 22, borderRadius: 8, backgroundColor: colors.surfaceMuted, alignItems: 'center', justifyContent: 'center' },
+  activeNumber: { backgroundColor: colors.primary },
+  numberText: { color: colors.textMuted, fontSize: 10, fontWeight: '800' },
+  activeNumberText: { color: colors.surface },
+  stepText: { color: colors.textMuted, fontSize: 11, fontWeight: '700' },
+  activeStepText: { color: colors.primary },
+  card: { padding: 16, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, borderRadius: 20, marginBottom: 14 },
+  sectionTitle: { color: colors.navy, fontSize: 16, fontWeight: '800', marginBottom: 15 },
+  sectionHint: { color: colors.textMuted, fontSize: 11, lineHeight: 17, marginTop: -8, marginBottom: 16 },
+  label: { color: colors.text, fontSize: 12, fontWeight: '700', marginBottom: 8 },
+  hint: { color: colors.textMuted, fontSize: 11, marginTop: 4 },
+  options: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginBottom: 14 },
+  option: { minHeight: 40, borderRadius: 12, borderWidth: 1, borderColor: colors.border, justifyContent: 'center', paddingHorizontal: 13 },
   optionActive: { backgroundColor: colors.primary, borderColor: colors.primary },
-  optionText: { color: colors.text, fontWeight: '900' },
+  optionText: { color: colors.textMuted, fontSize: 12, fontWeight: '700' },
   optionTextActive: { color: colors.surface },
-  preview: { color: colors.primary, fontWeight: '900', marginBottom: 14 },
-  errorText: { color: colors.danger, fontSize: 12, fontWeight: '700', marginTop: -8, marginBottom: 12 },
+  row: { flexDirection: 'row', gap: 10, alignItems: 'flex-end' },
+  column: { flex: 1, minWidth: 0 },
+  datePreview: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 11, borderRadius: 12, backgroundColor: colors.primarySoft },
+  dateText: { flex: 1, color: colors.primary, fontSize: 11, lineHeight: 17, fontWeight: '600' },
+  clearDate: { paddingTop: 10, alignSelf: 'flex-start' },
+  link: { color: colors.textMuted, fontSize: 10, textDecorationLine: 'underline' },
+  detailsToggle: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, marginBottom: 14, borderWidth: 1, borderColor: colors.border, borderRadius: 17, backgroundColor: colors.surface },
+  detailsTitle: { color: colors.primary, fontSize: 12, fontWeight: '700' },
+  toggleIcon: { color: colors.primary, fontSize: 23 },
+  totalRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, justifyContent: 'space-between', alignItems: 'center', padding: 12, borderRadius: 13, backgroundColor: colors.primarySoft },
+  totalLabel: { color: colors.primary, fontSize: 12, fontWeight: '700' },
+  total: { color: colors.primary, fontSize: 20, fontWeight: '800' },
+  balanceRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, alignItems: 'center', justifyContent: 'space-between', paddingTop: 12 },
+  balance: { color: colors.danger, fontWeight: '700', fontSize: 13 },
+  summary: { padding: 16, borderRadius: 20, backgroundColor: colors.cream, marginBottom: 14 },
+  summaryLabel: { color: colors.accent, fontSize: 9, letterSpacing: 1, fontWeight: '800', marginBottom: 8 },
+  summaryName: { color: colors.text, fontSize: 14, fontWeight: '700', marginBottom: 4 },
+  summaryText: { color: colors.textMuted, fontSize: 11, lineHeight: 18 },
+  buttons: { flexDirection: 'row', gap: 10, marginTop: 2 },
+  back: { flex: 1 },
+  next: { flex: 2 },
+  errorText: { color: colors.danger, fontSize: 11, marginBottom: 12 },
 });

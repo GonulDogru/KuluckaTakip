@@ -68,3 +68,7 @@ secrets.*
 
 # Generated Expo native platform
 /ios
+
+# Local release signing credentials and generated delivery files
+/.signing/
+/output/

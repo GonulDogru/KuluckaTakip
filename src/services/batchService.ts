@@ -1,3 +1,5 @@
+import { readAllRows } from './readAllRows';
+import { cacheReads } from './queryCache';
 import { demoBatches } from '../data/demoData';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import type { Batch, BatchStatus } from '../types/models';
@@ -47,9 +49,10 @@ export const batchService = {
       return [...demoBatchStore];
     }
 
-    const { data, error } = await supabase.from('batches').select('*').order('created_at', { ascending: false });
-    if (error) throw error;
-    return (data ?? []).map(mapBatch);
+    const client = supabase;
+    const data = await readAllRows((from, to) => client.from('batches').select('*')
+      .order('created_at', { ascending: false }).order('id').range(from, to));
+    return data.map(mapBatch);
   },
 
   async getById(id: string) {
@@ -63,8 +66,11 @@ export const batchService = {
   },
 
   async listByCustomer(customerId: string) {
-    const batches = await this.list();
-    return batches.filter((batch) => batch.customerId === customerId);
+    if (!supabase) return demoBatchStore.filter((batch) => batch.customerId === customerId);
+    const client = supabase;
+    const data = await readAllRows((from, to) => client.from('batches').select('*')
+      .eq('customer_id', customerId).order('created_at', { ascending: false }).order('id').range(from, to));
+    return data.map(mapBatch);
   },
 
   async create(input: CreateBatchInput) {
@@ -184,3 +190,5 @@ export const batchService = {
     return batch;
   },
 };
+
+cacheReads(batchService, 'batch', ['list', 'getById', 'listByCustomer']);

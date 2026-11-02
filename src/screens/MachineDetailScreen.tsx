@@ -58,14 +58,14 @@ export function MachineDetailScreen({ navigation, route }: Props) {
 }
 
 const styles = StyleSheet.create({
-  content: { padding: 18, paddingBottom: 28 },
+  content: { padding: 20, paddingBottom: 28 },
   status: { color: colors.primary, fontSize: 13, fontWeight: '900' },
   title: { color: colors.text, fontSize: 30, fontWeight: '900', marginTop: 4 },
   subtitle: { color: colors.textMuted, marginTop: 6 },
   grid: { flexDirection: 'row', gap: 12, marginTop: 14 },
   actions: { gap: 10, marginTop: 16 },
   section: { color: colors.text, fontSize: 18, fontWeight: '900', marginTop: 24, marginBottom: 10 },
-  rackCard: { backgroundColor: colors.surface, borderRadius: 8, borderWidth: 1, borderColor: colors.border, padding: 16, marginBottom: 10 },
+  rackCard: { backgroundColor: colors.surface, borderRadius: 18, borderWidth: 1, borderColor: colors.border, padding: 16, marginBottom: 10 },
   row: { flexDirection: 'row', justifyContent: 'space-between' },
   rackTitle: { color: colors.text, fontSize: 18, fontWeight: '900' },
   percent: { color: colors.primary, fontWeight: '900' },

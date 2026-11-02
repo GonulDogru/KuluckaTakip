@@ -51,10 +51,10 @@ export function HatchBasketsScreen() {
 }
 
 const styles = StyleSheet.create({
-  content: { padding: 18, paddingBottom: 28 },
+  content: { padding: 20, paddingBottom: 28 },
   title: { color: colors.text, fontSize: 30, fontWeight: '900' },
   subtitle: { color: colors.textMuted, marginTop: 6, marginBottom: 16 },
-  card: { backgroundColor: colors.surface, borderRadius: 8, borderWidth: 1, borderColor: colors.border, padding: 16, marginBottom: 12 },
+  card: { backgroundColor: colors.surface, borderRadius: 18, borderWidth: 1, borderColor: colors.border, padding: 16, marginBottom: 12 },
   name: { color: colors.text, fontSize: 18, fontWeight: '900' },
   capacity: { color: colors.primary, fontWeight: '900', marginTop: 6 },
   line: { color: colors.textMuted, marginTop: 8, fontWeight: '700' },

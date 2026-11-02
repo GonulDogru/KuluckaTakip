@@ -1,37 +1,3 @@
-export type CustomerCode = 'AY' | 'MK' | 'SD' | 'HB';
-
-export type Party = {
-  id: string;
-  code: CustomerCode;
-  customerName: string;
-  partyNo: string;
-  eggType: string;
-  count: number;
-  incubationDate: string;
-  basketTransferDate: string;
-  estimatedHatchDate: string;
-  totalFee: number;
-  paid: number;
-};
-
-export type ShelfCell = {
-  row: number;
-  column: number;
-  partyId: string | null;
-};
-
-export type Machine = {
-  id: string;
-  name: string;
-  model: string;
-  status: 'Çalışıyor' | 'Bakımda' | 'Boşta';
-  temperature: number;
-  humidity: number;
-  capacity: number;
-  occupied: number;
-  currentDay: number;
-};
-
 export type Customer = {
   id: string;
   firstName: string;

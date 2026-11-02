@@ -1,5 +1,8 @@
+import { smsStatusLabel, groupSmsLogs } from '../utils/smsStatus';
 import { useCallback, useRef, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { AppIcon } from '../components/AppIcon';
+import { PageHeading } from '../components/PageHeading';
+import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Screen } from '../components/Screen';
@@ -16,29 +19,14 @@ import type { Batch, Customer, EggType, SmsLog } from '../types/models';
 import { formatDateTR } from '../utils/dateRules';
 import { formatTurkishPhone, normalizeTurkishPhone } from '../utils/phone';
 
-function isSentStatus(status: string) {
-  return ['SENT', 'DELIVERED'].includes(status.toUpperCase());
-}
-
-function statusLabel(status: string) {
-  switch (status.toUpperCase()) {
-    case 'PENDING': return 'Taslak';
-    case 'QUEUED': return 'Gönderilecekler listesinde';
-    case 'SENDING': return 'İşlemde / sahiplenilmiş';
-    case 'SENT': return 'Gönderildi';
-    case 'DELIVERED': return 'Teslim edildi';
-    case 'FAILED': return 'Gönderim başarısız';
-    case 'UNKNOWN': return 'Gönderim sonucu belirsiz';
-    default: return 'Bekliyor';
-  }
-}
-
 export function SmsCenterScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [smsLogs, setSmsLogs] = useState<SmsLog[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [eggTypes, setEggTypes] = useState<EggType[]>([]);
+  const [selectedGroup, setSelectedGroup] = useState('pending');
+  const loaded = useRef(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sendingSmsId, setSendingSmsId] = useState<string | null>(null);
@@ -47,7 +35,7 @@ export function SmsCenterScreen() {
   useFocusEffect(useCallback(() => {
     let active = true;
     async function load() {
-      setLoading(true);
+      if (!loaded.current) setLoading(true);
       setError(null);
       try {
         const [logs, customerData, batchData, eggTypeData] = await Promise.all([
@@ -57,6 +45,7 @@ export function SmsCenterScreen() {
           eggTypeService.list(),
         ]);
         if (active) {
+          loaded.current = true;
           setSmsLogs(logs);
           setCustomers(customerData);
           setBatches(batchData);
@@ -74,12 +63,7 @@ export function SmsCenterScreen() {
     return () => { active = false; };
   }, []));
 
-  const pending = smsLogs.filter((sms) => sms.status.toUpperCase() === 'PENDING');
-  const queued = smsLogs.filter((sms) => sms.status.toUpperCase() === 'QUEUED');
-  const sending = smsLogs.filter((sms) => sms.status.toUpperCase() === 'SENDING');
-  const sent = smsLogs.filter((sms) => isSentStatus(sms.status));
-  const failed = smsLogs.filter((sms) => sms.status.toUpperCase() === 'FAILED');
-  const unknown = smsLogs.filter((sms) => sms.status.toUpperCase() === 'UNKNOWN');
+  const { pending, queued, sent } = groupSmsLogs(smsLogs);
 
   function confirmSend(sms: SmsLog) {
     const destination = normalizeTurkishPhone(sms.phone);
@@ -159,7 +143,7 @@ export function SmsCenterScreen() {
           {batch ? <Text style={styles.hatchDate}>Tahmini çıkım: {batch.expectedHatchDate ? formatDateTR(batch.expectedHatchDate) : '—'}</Text> : null}
           <Text style={styles.message} numberOfLines={3}>{sms.message}</Text>
           <View style={styles.cardFooter}>
-            <Text style={styles.status}>{`Durum: ${statusLabel(sms.status)}`}</Text>
+            <Text style={styles.status}>{`Durum: ${smsStatusLabel(sms.status)}`}</Text>
             <Text style={styles.openHint}>Önizleme ve düzenleme</Text>
           </View>
         </Pressable>
@@ -176,60 +160,77 @@ export function SmsCenterScreen() {
     );
   }
 
+  const groups = [
+    { id: 'pending', title: 'Taslaklar', hint: 'Düzenlenecek ve kontrol edilecek mesajların.', items: pending, color: colors.primary, soft: colors.primarySoft },
+    { id: 'queued', title: 'Gönderilecekler', hint: 'Sıradaki ve gönderimi devam eden mesajların.', items: queued, color: colors.red, soft: colors.redSoft },
+    { id: 'sent', title: 'Gönderilenler', hint: 'Gönderim geçmişini buradan takip et.', items: sent, color: colors.success, soft: '#E8F5EF' },
+  ];
+  const group = groups.find((item) => item.id === selectedGroup) ?? groups[0]!;
+
   return (
     <Screen>
-      <ScrollView contentContainerStyle={styles.content}>
-        <Text style={styles.title}>SMS Merkezi</Text>
-        <Text style={styles.subtitle}>Kuyruk ortak Supabase'dedir. SMS yalnızca açık onayınızla bu telefondaki varsayılan SIM üzerinden gönderilir.</Text>
-        <View style={styles.deviceCard}>
-          <Text style={styles.deviceTitle}>Gönderim yetkisi</Text>
-          <Text style={styles.deviceHint}>Etkin uygulama üyeliği olan kullanıcılar, ayrıca SMS cihaz kaydı veya ana cihaz seçimi olmadan bu telefondan gönderim yapabilir. Aynı SMS'i birden fazla telefonun eşzamanlı göndermesini claim işlemi engeller. Çift SIM cihazlarda Android varsayılan SMS SIM'ini kullanır.</Text>
-          {isSupabaseConfigured ? <View style={styles.signOutButton}><PrimaryButton title="Oturumu kapat" variant="secondary" onPress={() => { void signOut(); }} /></View> : null}
-        </View>
-        {loading ? <Text style={styles.state}>Yükleniyor...</Text> : null}
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-        {!loading && !error ? (
-          <>
-            <Text style={styles.sectionTitle}>Taslaklar ({pending.length})</Text>
-            {pending.length ? pending.map((sms) => renderSms(sms)) : <Text style={styles.state}>Bekleyen SMS bulunmuyor.</Text>}
-            <Text style={styles.sectionTitle}>Gönderilecekler ({queued.length})</Text>
-            {queued.length ? queued.map((sms) => renderSms(sms, true)) : <Text style={styles.state}>Gönderilecek SMS bulunmuyor.</Text>}
-            <Text style={styles.sectionTitle}>İşlemde / sahiplenilmiş ({sending.length})</Text>
-            {sending.length ? sending.map((sms) => renderSms(sms)) : <Text style={styles.state}>İşlemde SMS yok.</Text>}
-            <Text style={styles.sectionTitle}>Gönderilenler ({sent.length})</Text>
-            {sent.length ? sent.map((sms) => renderSms(sms)) : <Text style={styles.state}>Gönderilmiş SMS bulunmuyor.</Text>}
-            <Text style={styles.sectionTitle}>Başarısız ({failed.length})</Text>
-            {failed.length ? failed.map((sms) => renderSms(sms)) : <Text style={styles.state}>Başarısız SMS yok.</Text>}
-            <Text style={styles.sectionTitle}>Sonucu belirsiz ({unknown.length})</Text>
-            {unknown.length ? unknown.map((sms) => renderSms(sms)) : <Text style={styles.state}>Sonucu belirsiz SMS yok.</Text>}
-          </>
-        ) : null}
-      </ScrollView>
-
+      <FlatList
+        data={loading || error ? [] : group.items}
+        keyExtractor={(sms) => sms.id}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        ListHeaderComponent={<>
+          <PageHeading eyebrow="HABERLERİ PAYLAŞ" title="SMS Merkezi" subtitle="Mesajlarını hazırla, takip et ve paylaş." />
+          <View style={styles.filters} accessibilityRole="tablist">
+            {groups.map((item) => {
+              const selected = item.id === selectedGroup;
+              return <Pressable key={item.id} accessibilityRole="tab" accessibilityState={{ selected }} onPress={() => setSelectedGroup(item.id)} style={[styles.filter, selected && { backgroundColor: item.color, borderColor: item.color }]}>
+                <View style={[styles.filterCount, selected && styles.selectedCount]}><Text style={[styles.countText, selected && styles.selectedText]}>{loading ? '—' : item.items.length}</Text></View>
+                <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8} style={[styles.filterText, selected && styles.selectedText]}>{item.title}</Text>
+              </Pressable>;
+            })}
+          </View>
+          <View style={[styles.groupHeading, { backgroundColor: group.soft }]}>
+            <View style={[styles.groupIcon, { backgroundColor: group.color }]}><AppIcon name="mail" color={colors.surface} size={21} /></View>
+            <View style={styles.groupCopy}><Text style={[styles.groupTitle, { color: group.color }]}>{group.title}</Text><Text style={styles.groupHint}>{group.hint}</Text></View>
+          </View>
+          {loading ? <Text style={styles.state}>Mesajlar yükleniyor...</Text> : null}
+          {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
+        </>}
+        renderItem={({ item }) => renderSms(item, item.status.toUpperCase() === 'QUEUED')}
+        ListEmptyComponent={!loading && !error ? <View style={styles.empty}><View style={styles.emptyIcon}><AppIcon name="mail" size={28} color={group.color} /></View><Text style={styles.emptyTitle}>Burada henüz mesaj yok</Text><Text style={styles.emptyHint}>Bu gruptaki mesajların burada görünecek.</Text></View> : null}
+        ListFooterComponent={isSupabaseConfigured ? <Pressable accessibilityRole="button" onPress={() => { void signOut(); }} style={styles.signOutButton}><Text style={styles.signOutText}>Oturumu kapat</Text></Pressable> : null}
+      />
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  content: { padding: 18, paddingBottom: 28 },
-  title: { color: colors.text, fontSize: 30, fontWeight: '900' },
-  subtitle: { color: colors.textMuted, marginTop: 6, lineHeight: 21 },
-  sectionTitle: { color: colors.text, fontSize: 20, fontWeight: '900', marginTop: 24, marginBottom: 12 },
-  card: { backgroundColor: colors.surface, borderRadius: 8, borderWidth: 1, borderColor: colors.border, padding: 16, marginBottom: 12 },
+  content: { padding: 20, paddingBottom: 28 },
+  filters: { flexDirection: 'row', gap: 8, marginBottom: 20 },
+  filter: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 88, paddingHorizontal: 5, paddingVertical: 12, borderRadius: 18, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  filterText: { color: colors.textMuted, fontSize: 11, fontWeight: '700' },
+  filterCount: { minWidth: 32, minHeight: 32, borderRadius: 11, paddingHorizontal: 7, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.surfaceMuted },
+  countText: { color: colors.textMuted, fontSize: 19, fontWeight: '800' },
+  selectedText: { color: colors.surface },
+  selectedCount: { backgroundColor: 'rgba(255,255,255,0.2)' },
+  groupHeading: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 15, borderRadius: 19, marginBottom: 16 },
+  groupIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  groupCopy: { flex: 1 },
+  groupTitle: { fontSize: 17, fontWeight: '800', letterSpacing: -0.3 },
+  groupHint: { color: colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 4 },
+  card: { backgroundColor: colors.surface, borderRadius: 20, borderWidth: 1, borderColor: colors.border, padding: 17, marginBottom: 12 },
   pressed: { opacity: 0.82 },
-  customer: { color: colors.text, fontSize: 17, fontWeight: '900' },
-  phone: { color: colors.primary, marginTop: 5, fontWeight: '800' },
-  eggInfo: { color: colors.text, marginTop: 12, fontWeight: '900' },
-  hatchDate: { color: colors.textMuted, marginTop: 5, fontWeight: '700' },
-  message: { color: colors.text, lineHeight: 21, marginTop: 12 },
-  cardFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginTop: 14 },
-  status: { color: colors.accent, fontWeight: '900' },
-  openHint: { color: colors.primary, fontSize: 13, fontWeight: '800' },
-  state: { color: colors.textMuted, textAlign: 'center', marginVertical: 16, fontWeight: '700' },
-  error: { color: colors.danger, marginTop: 12, fontWeight: '800' },
-  deviceCard: { backgroundColor: colors.surface, borderRadius: 8, borderWidth: 1, borderColor: colors.border, padding: 14, marginTop: 16 },
-  deviceTitle: { color: colors.text, fontSize: 16, fontWeight: '900' },
-  deviceHint: { color: colors.textMuted, marginTop: 6, lineHeight: 19, fontSize: 12 },
+  customer: { color: colors.navy, fontSize: 16, fontWeight: '800' },
+  phone: { color: colors.textMuted, marginTop: 5, fontSize: 12, fontWeight: '600' },
+  eggInfo: { color: colors.primary, marginTop: 12, fontSize: 12, fontWeight: '700' },
+  hatchDate: { color: colors.textMuted, marginTop: 5, fontSize: 12 },
+  message: { color: colors.text, fontSize: 13, lineHeight: 20, marginTop: 12, backgroundColor: colors.surfaceMuted, borderRadius: 12, padding: 12 },
+  cardFooter: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginTop: 14 },
+  status: { color: colors.accent, backgroundColor: colors.cream, borderRadius: 7, paddingHorizontal: 8, paddingVertical: 5, fontSize: 10, fontWeight: '700' },
+  openHint: { color: colors.primary, fontSize: 11, fontWeight: '700' },
+  state: { color: colors.textMuted, textAlign: 'center', marginVertical: 16, fontWeight: '600' },
+  error: { color: colors.danger, marginVertical: 12, fontWeight: '700' },
+  empty: { alignItems: 'center', paddingVertical: 32 },
+  emptyIcon: { backgroundColor: colors.surface, width: 68, height: 68, borderRadius: 24, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
+  emptyTitle: { color: colors.text, fontSize: 15, fontWeight: '700' },
+  emptyHint: { color: colors.textMuted, fontSize: 12, marginTop: 7, textAlign: 'center' },
   sendButton: { marginTop: 14 },
-  signOutButton: { marginTop: 16 },
+  signOutButton: { minHeight: 48, justifyContent: 'center', alignItems: 'center', marginTop: 18 },
+  signOutText: { color: colors.textMuted, fontSize: 12, fontWeight: '600' },
 });

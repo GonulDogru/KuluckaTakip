@@ -11,7 +11,7 @@ export function InfoCard({ title, value, tone = 'default' }: InfoCardProps) {
   return (
     <View style={[styles.card, styles[tone]]}>
       <Text style={styles.title}>{title}</Text>
-      <Text style={styles.value}>{value}</Text>
+      <Text style={styles.value} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.65}>{value}</Text>
     </View>
   );
 }
@@ -19,18 +19,18 @@ export function InfoCard({ title, value, tone = 'default' }: InfoCardProps) {
 const styles = StyleSheet.create({
   card: {
     flex: 1,
-    minHeight: 92,
-    borderRadius: 8,
+    minHeight: 112,
+    borderRadius: 22,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
-    padding: 14,
+    padding: 18,
     justifyContent: 'space-between',
   },
   default: {},
   primary: {
     backgroundColor: colors.primarySoft,
-    borderColor: '#BFE2EA',
+    borderColor: '#DCE6FF',
   },
   success: {
     backgroundColor: '#E7F6ED',
@@ -47,7 +47,7 @@ const styles = StyleSheet.create({
   },
   value: {
     color: colors.text,
-    fontSize: 22,
+    fontSize: 25,
     fontWeight: '800',
   },
 });
