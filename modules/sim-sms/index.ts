@@ -12,6 +12,10 @@ declare class ExpoSimSmsModule extends NativeModule {
 
 const SimSmsModule = requireOptionalNativeModule<ExpoSimSmsModule>('ExpoSimSms');
 
+export function isDirectSimSmsModuleInstalled(): boolean {
+  return SimSmsModule !== null && SimSmsModule !== undefined;
+}
+
 export function isDirectSimSmsAvailable(): boolean {
   return SimSmsModule?.isAvailable() ?? false;
 }

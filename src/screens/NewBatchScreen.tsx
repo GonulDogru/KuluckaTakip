@@ -11,11 +11,10 @@ import { PrimaryButton } from '../components/PrimaryButton';
 import { Screen } from '../components/Screen';
 import { TextField } from '../components/TextField';
 import type { RootStackParamList } from '../navigation/types';
-import { batchService } from '../services/batchService';
+import { acceptanceService, type AcceptanceInput } from '../services/acceptanceService';
+import { readPendingOperation } from '../services/pendingOperation';
 import { customerService } from '../services/customerService';
 import { eggTypeService } from '../services/eggTypeService';
-import { paymentService } from '../services/paymentService';
-import { smsService } from '../services/smsService';
 import { colors } from '../theme/colors';
 import type { EggType } from '../types/models';
 import { calculateBatchDates, formatDateTR, isValidDateOnly } from '../utils/dateRules';
@@ -54,8 +53,9 @@ export function NewBatchScreen({ navigation, route }: Props) {
   const [showDetails, setShowDetails] = useState(false);
   const [eggTypes, setEggTypes] = useState<EggType[]>([]);
   const [saving, setSaving] = useState(false);
+  const [pendingAcceptance, setPendingAcceptance] = useState<AcceptanceInput | null>(null);
   const [loadingOptions, setLoadingOptions] = useState(true);
-  const { control, handleSubmit, watch, setValue, trigger, formState: { errors } } = useForm<FormData>({
+  const { control, handleSubmit, watch, setValue, reset, trigger, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
     shouldUnregister: false,
     defaultValues: {
@@ -86,8 +86,11 @@ export function NewBatchScreen({ navigation, route }: Props) {
           setValue('customerName', `${preselected.firstName} ${preselected.lastName}`);
           setValue('phone', preselected.phone);
         }
-        if (eggTypeData[0]) setValue('eggTypeId', eggTypeData[0].id);
-        else Alert.alert('Yumurta türleri yüklenemedi', 'Aktif yumurta türü bulunamadı. Lütfen Supabase bağlantısını ve yumurta türü kayıtlarını kontrol edin.');
+        const pending = await readPendingOperation<AcceptanceInput>('acceptance');
+        if (!active) return;
+        if (pending) { setPendingAcceptance(pending.input); reset(pending.input); setStep(2); Alert.alert('Bekleyen kabul', 'Önceki işlemin sonucu doğrulanmadı. Bilgiler geri yüklendi; aynı kabulü güvenle yeniden deneyebilirsiniz.'); }
+        else if (eggTypeData[0]) setValue('eggTypeId', eggTypeData[0].id);
+        if (!eggTypeData.length) Alert.alert('Yumurta türleri yüklenemedi', 'Aktif yumurta türü bulunamadı. Lütfen Supabase bağlantısını ve yumurta türü kayıtlarını kontrol edin.');
       } catch (error) {
         if (active) {
           Alert.alert('Form verileri yüklenemedi', error instanceof Error ? error.message : 'Veriler Supabase üzerinden alınamadı.');
@@ -98,11 +101,11 @@ export function NewBatchScreen({ navigation, route }: Props) {
     }
     void load();
     return () => { active = false; };
-  }, [route.params?.customerId, setValue]);
+  }, [route.params?.customerId, setValue, reset]);
 
   const values = watch();
   useEffect(() => {
-    if (!normalizeTurkishPhone(values.phone)) return;
+    if (pendingAcceptance || !normalizeTurkishPhone(values.phone)) return;
     let active = true;
     const timer = setTimeout(() => {
       void customerService.findByPhone(values.phone).then((customer) => {
@@ -110,7 +113,7 @@ export function NewBatchScreen({ navigation, route }: Props) {
       }).catch(() => { /* Saving validates the lookup and reports any connection error. */ });
     }, 300);
     return () => { active = false; clearTimeout(timer); };
-  }, [values.phone, setValue]);
+  }, [values.phone, setValue, pendingAcceptance]);
 
   const unitPricePreview = parseMoneyInput(values.unitPrice) ?? 0;
   const totalPrice = Number(values.eggCount || 0) * unitPricePreview;
@@ -151,63 +154,29 @@ export function NewBatchScreen({ navigation, route }: Props) {
         throw new Error('Geçerli bir birim fiyat giriniz.');
       }
 
-      if (!eggTypeExists) {
+      if (paidAmount > Number(form.eggCount) * unitPrice) throw new Error('Ödeme toplam tutarı aşamaz.');
+      if (form.incubationDate && form.incubationDate < form.receivedDate) throw new Error('Kuluçka tarihi kabul tarihinden önce olamaz.');
+
+      if (!pendingAcceptance && !eggTypeExists) {
         throw new Error('Yumurta türü bulunamadı. Lütfen tekrar seçin.');
       }
 
-      let customer = await customerService.findByPhone(form.phone);
-      if (!customer) {
-        const [firstName, ...rest] = form.customerName.trim().split(/\s+/);
-        customer = await customerService.create({
-          firstName,
-          lastName: rest.join(' ') || '-',
-          phone: form.phone,
-          note: null,
-        });
+      const existing = pendingAcceptance ? null : await customerService.findByPhone(form.phone);
+      if (existing && !existing.isActive) {
+        Alert.alert('Arşivlenmiş müşteri', 'Yeni kabulden önce müşteriyi arşivden çıkarın.', [
+          { text: 'Vazgeç', style: 'cancel' },
+          { text: 'Müşteriyi aç', onPress: () => navigation.navigate('CustomerDetail', { customerId: existing.id }) },
+        ]);
+        return;
       }
-
-      const breedId = form.breed?.trim() ? await eggTypeService.ensureBreed(form.eggTypeId, form.breed) : null;
-      const batch = await batchService.create({
-        customerId: customer.id,
-        breedId,
-        eggTypeId: form.eggTypeId,
-        eggCount: Number(form.eggCount),
-        receivedDate: form.receivedDate,
-        incubationDate: form.incubationDate || null,
-        unitPrice,
-        note: form.note,
-      });
-
-      let paymentWarning = '';
-      if (paidAmount > 0) {
-        try {
-          await paymentService.create({
-          customerId: customer.id,
-          batchId: batch.id,
-          amount: paidAmount,
-          paymentMethod: 'Nakit',
-          paymentDate: form.receivedDate,
-          note: 'Yumurta kabul ödemesi',
-          });
-        } catch {
-          paymentWarning = 'Ödeme kaydedilemedi. Kabul kaydı oluşturuldu; aynı kabulü yeniden eklemeyin. Ödemeyi kabul detayından kontrol edip ekleyin.\n\n';
-        }
-      }
-
-      const eggType = eggTypes.find((item) => item.id === form.eggTypeId);
-      if (!eggType) throw new Error('Yumurta türü bulunamadı. Lütfen tekrar seçin.');
-      let smsDraftMessage: string;
-      try {
-        const draftResult = await smsService.createHatchDraft({ customer, batch, eggType });
-        smsDraftMessage = draftResult.created
-          ? 'SMS taslağı Bekleyen SMS bölümüne eklendi. Gönderilmedi.'
-          : draftResult.reason;
-      } catch (error) {
-        smsDraftMessage = `Yumurta kabulü kaydedildi ancak SMS taslağı oluşturulamadı: ${error instanceof Error ? error.message : 'Bilinmeyen hata.'}`;
-      }
+      const batch = await acceptanceService.create(pendingAcceptance ?? form);
+      const smsDraftMessage = batch.expectedHatchDate
+        ? 'Ödeme ve kabul birlikte kaydedildi. SMS taslağı hazır; henüz gönderilmedi.'
+        : 'Ödeme ve kabul birlikte kaydedildi. Kuluçka tarihi eklenince SMS taslağı hazırlanır.';
+      setPendingAcceptance(null);
       Alert.alert(
         'Yumurta kabulü kaydedildi',
-        paymentWarning + smsDraftMessage,
+        smsDraftMessage,
         [
           { text: 'Kabul Detayı', onPress: () => navigation.replace('BatchDetail', { batchId: batch.id }) },
           { text: 'SMS Merkezi', onPress: () => navigation.popTo('MainTabs', { screen: 'SmsCenter' }) },
@@ -215,6 +184,9 @@ export function NewBatchScreen({ navigation, route }: Props) {
         { cancelable: false },
       );
     } catch (error) {
+      const pending = await readPendingOperation<AcceptanceInput>('acceptance').catch(() => null);
+      setPendingAcceptance(pending?.input ?? null);
+      if (pending) { reset(pending.input); setStep(2); Keyboard.dismiss(); }
       if (__DEV__) {
         console.error('Yumurta kabulü kaydedilemedi:', error);
       }
@@ -228,6 +200,8 @@ export function NewBatchScreen({ navigation, route }: Props) {
   return (
     <Screen edges={['left', 'right', 'bottom']}>
       <KeyboardAwareForm key={step} bottomPadding={20}>
+        {pendingAcceptance ? <Text style={styles.sectionHint}>Önceki kabulün sonucu bekleniyor. Kayıt bilgileri korunuyor; yeniden deneme ikinci kayıt oluşturmaz.</Text> : null}
+        <View pointerEvents={pendingAcceptance ? "none" : "auto"}>
         <View style={styles.steps}>
           {['Müşteri', 'Yumurta', 'Ödeme'].map((title, index) => <View key={title} accessibilityLabel={`Adım ${index + 1}: ${title}${index === step ? ', geçerli adım' : ''}`} style={[styles.step, index === step && styles.activeStep]}>
             <View style={[styles.stepNumber, index <= step && styles.activeNumber]}><Text style={[styles.numberText, index <= step && styles.activeNumberText]}>{index + 1}</Text></View>
@@ -238,8 +212,8 @@ export function NewBatchScreen({ navigation, route }: Props) {
         {step === 0 ? <View style={styles.card}>
           <Text style={styles.sectionTitle}>Müşteri bilgileri</Text>
           <Text style={styles.sectionHint}>Telefon kayıtlıysa müşteri adı otomatik gelir.</Text>
-          <Controller control={control} name="phone" render={({ field }) => <TextField label="Cep telefonu" value={field.value} onChangeText={field.onChange} keyboardType="phone-pad" placeholder="05xx xxx xx xx" error={errors.phone?.message} />} />
-          <Controller control={control} name="customerName" render={({ field }) => <TextField label="Müşteri adı soyadı" value={field.value} onChangeText={field.onChange} error={errors.customerName?.message} />} />
+          <Controller control={control} name="phone" render={({ field }) => <TextField editable={!pendingAcceptance} label="Cep telefonu" value={field.value} onChangeText={field.onChange} keyboardType="phone-pad" placeholder="05xx xxx xx xx" error={errors.phone?.message} />} />
+          <Controller control={control} name="customerName" render={({ field }) => <TextField editable={!pendingAcceptance} label="Müşteri adı soyadı" value={field.value} onChangeText={field.onChange} error={errors.customerName?.message} />} />
         </View> : null}
 
         {step === 1 ? <>
@@ -250,7 +224,7 @@ export function NewBatchScreen({ navigation, route }: Props) {
             {!loadingOptions && eggTypes.length === 0 ? <Text style={styles.errorText}>Aktif yumurta türü bulunamadı.</Text> : null}
             <View style={styles.options}>{eggTypes.map((eggType) => <Pressable key={eggType.id} accessibilityRole="radio" accessibilityState={{ checked: values.eggTypeId === eggType.id }} onPress={() => setValue('eggTypeId', eggType.id, { shouldValidate: true })} style={[styles.option, values.eggTypeId === eggType.id && styles.optionActive]}><Text style={[styles.optionText, values.eggTypeId === eggType.id && styles.optionTextActive]}>{eggType.name}</Text></Pressable>)}</View>
             {errors.eggTypeId?.message ? <Text style={styles.errorText}>{errors.eggTypeId.message}</Text> : null}
-            <Controller control={control} name="eggCount" render={({ field }) => <TextField label="Yumurta adedi" value={field.value} onChangeText={field.onChange} keyboardType="number-pad" placeholder="Örn. 100" error={errors.eggCount?.message} />} />
+            <Controller control={control} name="eggCount" render={({ field }) => <TextField editable={!pendingAcceptance} label="Yumurta adedi" value={field.value} onChangeText={field.onChange} keyboardType="number-pad" placeholder="Örn. 100" error={errors.eggCount?.message} />} />
             <View style={styles.row}>
               <View style={styles.column}><Controller control={control} name="receivedDate" render={({ field }) => <DateField compact label="Kabul tarihi" value={field.value} onChange={field.onChange} error={errors.receivedDate?.message} />} /></View>
               <View style={styles.column}><Controller control={control} name="incubationDate" render={({ field }) => <DateField compact label="Kuluçka tarihi" value={field.value} onChange={field.onChange} error={errors.incubationDate?.message} />} /></View>
@@ -260,8 +234,8 @@ export function NewBatchScreen({ navigation, route }: Props) {
           </View>
           <Pressable accessibilityRole="button" accessibilityState={{ expanded: showDetails }} onPress={() => setShowDetails((current) => !current)} style={styles.detailsToggle}><View><Text style={styles.detailsTitle}>Irk ve not {values.breed || values.note ? '•' : ''}</Text><Text style={styles.hint}>İsteğe bağlı ayrıntılar</Text></View><Text style={styles.toggleIcon}>{showDetails ? '−' : '+'}</Text></Pressable>
           {showDetails ? <View style={styles.card}>
-            <Controller control={control} name="breed" render={({ field }) => <TextField label="Irk" value={field.value ?? ''} onChangeText={field.onChange} placeholder="İsteğe bağlı" />} />
-            <Controller control={control} name="note" render={({ field }) => <TextField label="Not" value={field.value ?? ''} onChangeText={field.onChange} multiline placeholder="Bu kabulle ilgili kısa not" />} />
+            <Controller control={control} name="breed" render={({ field }) => <TextField editable={!pendingAcceptance} label="Irk" value={field.value ?? ''} onChangeText={field.onChange} placeholder="İsteğe bağlı" />} />
+            <Controller control={control} name="note" render={({ field }) => <TextField editable={!pendingAcceptance} label="Not" value={field.value ?? ''} onChangeText={field.onChange} multiline placeholder="Bu kabulle ilgili kısa not" />} />
           </View> : null}
         </> : null}
 
@@ -269,8 +243,8 @@ export function NewBatchScreen({ navigation, route }: Props) {
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>Ücret ve ödeme</Text>
             <View style={styles.row}>
-              <View style={styles.column}><Controller control={control} name="unitPrice" render={({ field }) => <TextField label="Birim fiyat (TL)" value={field.value} onChangeText={field.onChange} keyboardType="decimal-pad" placeholder="0,00" error={errors.unitPrice?.message} />} /></View>
-              <View style={styles.column}><Controller control={control} name="paidAmount" render={({ field }) => <TextField label="Ödenen (TL)" value={field.value} onChangeText={field.onChange} keyboardType="decimal-pad" placeholder="0,00" error={errors.paidAmount?.message} />} /></View>
+              <View style={styles.column}><Controller control={control} name="unitPrice" render={({ field }) => <TextField editable={!pendingAcceptance} label="Birim fiyat (TL)" value={field.value} onChangeText={field.onChange} keyboardType="decimal-pad" placeholder="0,00" error={errors.unitPrice?.message} />} /></View>
+              <View style={styles.column}><Controller control={control} name="paidAmount" render={({ field }) => <TextField editable={!pendingAcceptance} label="Ödenen (TL)" value={field.value} onChangeText={field.onChange} keyboardType="decimal-pad" placeholder="0,00" error={errors.paidAmount?.message} />} /></View>
             </View>
             <View style={styles.totalRow}><Text style={styles.totalLabel}>Toplam tutar</Text><Text style={styles.total}>{formatCurrency(totalPrice)}</Text></View>
             <View style={styles.balanceRow}><Text style={styles.hint}>Kalan tutar</Text><Text style={styles.balance}>{formatCurrency(totalPrice - (parseMoneyInput(values.paidAmount) ?? 0))}</Text></View>
@@ -286,9 +260,10 @@ export function NewBatchScreen({ navigation, route }: Props) {
           </View>
         </> : null}
 
+        </View>
         <View style={styles.buttons}>
-          {step > 0 ? <View style={styles.back}><PrimaryButton title="Geri" variant="secondary" onPress={() => { Keyboard.dismiss(); setStep((current) => current - 1); }} disabled={saving} /></View> : null}
-          <View style={styles.next}>{step < 2 ? <PrimaryButton title={step === 0 ? 'Yumurta bilgileri →' : 'Ödemeye geç →'} onPress={() => { void nextStep(); }} disabled={loadingOptions || eggTypes.length === 0} /> : <PrimaryButton title={saving ? 'Kaydediliyor...' : 'Kabulü kaydet'} onPress={handleSubmit(onSubmit, onInvalid)} disabled={saving || loadingOptions || eggTypes.length === 0} />}</View>
+          {step > 0 ? <View style={styles.back}><PrimaryButton title="Geri" variant="secondary" onPress={() => { Keyboard.dismiss(); setStep((current) => current - 1); }} disabled={saving || !!pendingAcceptance} /></View> : null}
+          <View style={styles.next}>{step < 2 ? <PrimaryButton title={step === 0 ? 'Yumurta bilgileri →' : 'Ödemeye geç →'} onPress={() => { void nextStep(); }} disabled={loadingOptions || eggTypes.length === 0} /> : <PrimaryButton title={saving ? 'Kaydediliyor...' : pendingAcceptance ? 'Bekleyen kabulü yeniden dene' : 'Kabulü kaydet'} onPress={pendingAcceptance ? () => { void onSubmit(pendingAcceptance); } : handleSubmit(onSubmit, onInvalid)} disabled={saving || loadingOptions || (!pendingAcceptance && eggTypes.length === 0)} />}</View>
         </View>
       </KeyboardAwareForm>
     </Screen>

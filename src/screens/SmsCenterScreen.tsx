@@ -1,9 +1,11 @@
+import { useFocusedRefresh } from '../hooks/useFocusedRefresh';
+import { clearQueryCache } from '../services/queryCache';
 import { smsStatusLabel, groupSmsLogs } from '../utils/smsStatus';
 import { useCallback, useRef, useState } from 'react';
 import { AppIcon } from '../components/AppIcon';
 import { PageHeading } from '../components/PageHeading';
-import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Screen } from '../components/Screen';
 import { customerService } from '../services/customerService';
@@ -32,38 +34,31 @@ export function SmsCenterScreen() {
   const [sendingSmsId, setSendingSmsId] = useState<string | null>(null);
   const sendingSmsRef = useRef(false);
 
-  useFocusEffect(useCallback(() => {
-    let active = true;
-    async function load() {
-      if (!loaded.current) setLoading(true);
-      setError(null);
-      try {
-        const [logs, customerData, batchData, eggTypeData] = await Promise.all([
-          smsService.list(),
-          customerService.list({ includeArchived: true }),
-          batchService.list(),
-          eggTypeService.list(),
-        ]);
-        if (active) {
-          loaded.current = true;
-          setSmsLogs(logs);
-          setCustomers(customerData);
-          setBatches(batchData);
-          setEggTypes(eggTypeData);
-        }
-      } catch (loadError) {
-        if (active) {
-          setError(loadError instanceof Error ? loadError.message : 'SMS kayıtları yüklenemedi.');
-        }
-      } finally {
-        if (active) setLoading(false);
-      }
+  const loadVersion = useRef(0);
+  const load = useCallback(async () => {
+    const version = ++loadVersion.current;
+    if (!loaded.current) setLoading(true);
+    setError(null);
+    try {
+      const [logs, customerData, batchData, eggTypeData] = await Promise.all([
+        smsService.list(), customerService.list({ includeArchived: true }), batchService.list(), eggTypeService.list(),
+      ]);
+      if (version !== loadVersion.current) return;
+      loaded.current = true;
+      setSmsLogs(logs);
+      setCustomers(customerData);
+      setBatches(batchData);
+      setEggTypes(eggTypeData);
+    } catch (loadError) {
+      if (version === loadVersion.current) setError(loadError instanceof Error ? loadError.message : 'SMS kayıtları yüklenemedi.');
+    } finally {
+      if (version === loadVersion.current) setLoading(false);
     }
-    void load();
-    return () => { active = false; };
-  }, []));
+  }, []);
+  useFocusedRefresh(() => { void load(); }, ['sms', 'batch', 'customer', 'eggType']);
 
   const { pending, queued, sent } = groupSmsLogs(smsLogs);
+  const deviceSupport = smsService.getDeviceSupport();
 
   function confirmSend(sms: SmsLog) {
     const destination = normalizeTurkishPhone(sms.phone);
@@ -171,11 +166,13 @@ export function SmsCenterScreen() {
     <Screen>
       <FlatList
         data={loading || error ? [] : group.items}
+        refreshControl={<RefreshControl refreshing={loading} onRefresh={() => { clearQueryCache(); setLoading(true); void load(); }} />}
         keyExtractor={(sms) => sms.id}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
         ListHeaderComponent={<>
           <PageHeading eyebrow="HABERLERİ PAYLAŞ" title="SMS Merkezi" subtitle="Mesajlarını hazırla, takip et ve paylaş." />
+          <Text testID="sms-device-support" style={styles.deviceSupport}>{deviceSupport.detail}</Text>
           <View style={styles.filters} accessibilityRole="tablist">
             {groups.map((item) => {
               const selected = item.id === selectedGroup;
@@ -190,7 +187,7 @@ export function SmsCenterScreen() {
             <View style={styles.groupCopy}><Text style={[styles.groupTitle, { color: group.color }]}>{group.title}</Text><Text style={styles.groupHint}>{group.hint}</Text></View>
           </View>
           {loading ? <Text style={styles.state}>Mesajlar yükleniyor...</Text> : null}
-          {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
+          {error ? <><Text accessibilityRole="alert" style={styles.error}>{error}</Text><PrimaryButton title="Tekrar dene" onPress={() => { clearQueryCache(); void load(); }} /></> : null}
         </>}
         renderItem={({ item }) => renderSms(item, item.status.toUpperCase() === 'QUEUED')}
         ListEmptyComponent={!loading && !error ? <View style={styles.empty}><View style={styles.emptyIcon}><AppIcon name="mail" size={28} color={group.color} /></View><Text style={styles.emptyTitle}>Burada henüz mesaj yok</Text><Text style={styles.emptyHint}>Bu gruptaki mesajların burada görünecek.</Text></View> : null}
@@ -201,6 +198,7 @@ export function SmsCenterScreen() {
 }
 
 const styles = StyleSheet.create({
+  deviceSupport: { color: colors.textMuted, fontSize: 12, lineHeight: 18, marginBottom: 16 },
   content: { padding: 20, paddingBottom: 28 },
   filters: { flexDirection: 'row', gap: 8, marginBottom: 20 },
   filter: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 88, paddingHorizontal: 5, paddingVertical: 12, borderRadius: 18, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },

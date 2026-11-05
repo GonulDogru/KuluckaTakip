@@ -71,7 +71,7 @@ export function PartiesScreen() {
   const eggTypesById = useMemo(() => new Map(eggTypes.map((eggType) => [eggType.id, eggType])), [eggTypes]);
   const paidByBatch = useMemo(() => {
     const totals = new Map<string, number>();
-    for (const payment of payments) totals.set(payment.batchId, (totals.get(payment.batchId) ?? 0) + payment.amount);
+    for (const payment of payments.filter((p) => !p.voidedAt)) totals.set(payment.batchId, (totals.get(payment.batchId) ?? 0) + payment.amount);
     return totals;
   }, [payments]);
   const filtered = useMemo(() => filterBatches(batches, customersById, eggTypesById, paidByBatch, filters), [batches, customersById, eggTypesById, paidByBatch, filters]);

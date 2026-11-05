@@ -95,3 +95,8 @@ Her telefonda kullanıcı SMS Merkezi'nde **SIM ile gönder** eylemini ayrıca o
 SIM'e fiziksel gönderim ile Supabase durum güncellemesi tek atomik işlem değildir. Telefon mesajı gönderip kapanırsa veya ağ/server sonucu kaydedemezse veritabanında sonuç `UNKNOWN` kalabilir. Güvenilir “tam bir kez” gönderim garantisi verilemez; belirsiz sonuç otomatik yeniden denenmez. Kullanıcı SMS Merkezi'nde manuel uzlaştırmalıdır. Manuel yeniden kuyruğa alma çift gönderim riski uyarısıyla ayrıca onaylanır.
 
 `SEND_SMS`, Android'in hassas/kısıtlı izinlerindendir. Bu yapılandırma kurum içi/özel dağıtım ve uygulama üyeliği etkin kullanıcılar içindir; Play Store yayını ayrıca Google Play SMS izin politikası ve gerekli onay/istisna koşullarına bağlıdır. Play dağıtımı varsayılmamalı; özel build'i test etmeden müşteri verisiyle veya gerçek alıcılara gönderim yapılmamalıdır.
+
+
+## 5 Kasım 2026 akış güncellemesi
+
+`20261105120000_flow_integrity.sql`, yukarıdaki doğrudan ödeme/SMS taslağı yazma ve yeniden kuyruklama davranışını değiştirir. Yeni istemci atomik ve idempotent `save_acceptance`, `save_payment`, `ensure_hatch_sms` RPC’lerini kullanır; ödeme iptalleri silinmeden saklanır. SMS tekrar denemesi önce PENDING durumuna döner. Uygulama ve sunucu birlikte güncellenmelidir. Ayrıntılar ve test kapsamı: [Akış düzeltmeleri ve geçiş](FLOW_FIXES_2026-11-05.md).

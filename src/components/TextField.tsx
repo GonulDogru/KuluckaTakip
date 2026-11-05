@@ -6,6 +6,7 @@ import { useKeyboardAwareInput } from './KeyboardAwareForm';
 type Props = {
   label: string;
   value: string;
+  editable?: boolean;
   onChangeText: (value: string) => void;
   placeholder?: string;
   error?: string;
@@ -18,7 +19,7 @@ type Props = {
 };
 
 export const TextField = forwardRef<TextInput, Props>(function TextField(
-  { label, value, onChangeText, placeholder, error, keyboardType, multiline, returnKeyType, blurOnSubmit, onSubmitEditing, onFocus },
+  { label, value, editable = true, onChangeText, placeholder, error, keyboardType, multiline, returnKeyType, blurOnSubmit, onSubmitEditing, onFocus },
   ref,
 ) {
   const fieldKey = useId();
@@ -36,6 +37,7 @@ export const TextField = forwardRef<TextInput, Props>(function TextField(
       <TextInput
         ref={ref}
         value={value}
+        editable={editable}
         onChangeText={onChangeText}
         placeholder={placeholder}
         keyboardType={keyboardType}
@@ -47,6 +49,7 @@ export const TextField = forwardRef<TextInput, Props>(function TextField(
           keyboardAware.handleInputFocus(fieldKey, wrapperRef.current);
           onFocus?.(event);
         }}
+        onBlur={() => keyboardAware.handleInputBlur(fieldKey)}
         style={[styles.input, multiline && styles.multiline, error && styles.inputError]}
         placeholderTextColor={colors.textMuted}
       />

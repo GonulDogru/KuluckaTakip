@@ -41,6 +41,7 @@ export const dashboardService = {
     ]);
     const paidByBatch = new Map<string, number>();
     for (const payment of payments) {
+      if (payment.voidedAt) continue;
       paidByBatch.set(payment.batchId, (paidByBatch.get(payment.batchId) ?? 0) + payment.amount);
     }
     return {

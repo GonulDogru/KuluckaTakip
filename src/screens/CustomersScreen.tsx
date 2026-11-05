@@ -19,6 +19,7 @@ export function CustomersScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [customers, setCustomers] = useState<CustomerSummary[]>([]);
   const [query, setQuery] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
   const loaded = useRef(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -28,7 +29,7 @@ export function CustomersScreen() {
     try {
       if (showLoading && !loaded.current) setLoading(true);
       setError(null);
-      setCustomers(await customerService.listWithSummary());
+      setCustomers(await customerService.listWithSummary({ includeArchived: true }));
       loaded.current = true;
     } catch {
       setError('Müşteriler yüklenemedi.');
@@ -48,11 +49,12 @@ export function CustomersScreen() {
 
   const filtered = useMemo(() => {
     const term = query.trim().toLocaleLowerCase('tr-TR');
-    if (!term) return customers;
-    return customers.filter((customer) =>
+    const visible = customers.filter((customer) => showArchived || customer.isActive);
+    if (!term) return visible;
+    return visible.filter((customer) =>
       `${customer.firstName} ${customer.lastName} ${customer.phone}`.toLocaleLowerCase('tr-TR').includes(term),
     );
-  }, [customers, query]);
+  }, [customers, query, showArchived]);
 
   return (
     <Screen>
@@ -66,9 +68,10 @@ export function CustomersScreen() {
             <DemoModeBadge />
             <PageHeading eyebrow="BİRLİKTE BÜYÜYORUZ" title="Müşteriler" subtitle="Müşterilerin, kayıtları ve ödemeleri bir arada." />
             <View style={styles.header}>
-              <Text style={styles.listLabel}>{customers.length} müşteri</Text>
+              <Text style={styles.listLabel}>{filtered.length} müşteri</Text>
               <PrimaryButton title="+ Yeni müşteri" onPress={() => navigation.navigate('NewCustomer')} />
             </View>
+            <PrimaryButton title={showArchived ? "Arşivdekileri gizle" : "Arşivdekileri de göster"} variant="secondary" onPress={() => setShowArchived((value) => !value)} />
             <TextField label="Ara" value={query} onChangeText={setQuery} placeholder="Ad, soyad veya telefon" />
             {loading ? <Text style={styles.state}>Yükleniyor...</Text> : null}
             {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -82,12 +85,12 @@ export function CustomersScreen() {
           >
             <View style={styles.customerTop}>
               <View style={styles.avatar}><Text style={styles.avatarText}>{item.firstName.slice(0, 1)}{item.lastName.slice(0, 1)}</Text></View>
-              <View style={styles.customerCopy}><Text style={styles.name}>{item.firstName} {item.lastName}</Text><Text style={styles.phone}>{item.phone}</Text></View>
+              <View style={styles.customerCopy}><Text style={styles.name}>{item.firstName} {item.lastName}{item.isActive ? "" : " · Arşivde"}</Text><Text style={styles.phone}>{item.phone}</Text></View>
               <Text style={styles.chevron}>›</Text>
             </View>
             <View style={styles.row}>
               <Text style={styles.metric}>{item.activeBatchCount} aktif yumurta kabulü</Text>
-              <Text style={styles.debt}>{formatCurrency(item.totalDebt)}</Text>
+              <Text style={styles.debt}>{item.totalDebt < 0 ? `Alacak: ${formatCurrency(Math.abs(item.totalDebt))}` : formatCurrency(item.totalDebt)}</Text>
             </View>
           </Pressable>
         )}

@@ -72,3 +72,6 @@ secrets.*
 # Local release signing credentials and generated delivery files
 /.signing/
 /output/
+
+# Supabase CLI local connection metadata
+/supabase/.temp/

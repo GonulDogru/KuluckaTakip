@@ -33,9 +33,9 @@ export const customerService = {
     return data.map(mapCustomer);
   },
 
-  async listWithSummary(): Promise<CustomerSummary[]> {
+  async listWithSummary(options: { includeArchived?: boolean } = {}): Promise<CustomerSummary[]> {
     const [customers, batches, payments] = await Promise.all([
-      this.list(), batchService.list(), paymentService.list(),
+      this.list(options), batchService.list(), paymentService.list(),
     ]);
 
     const batchTotalsByCustomer = new Map<string, { totalPrice: number; activeBatchCount: number }>();
@@ -48,6 +48,7 @@ export const customerService = {
 
     const paidByCustomer = new Map<string, number>();
     for (const payment of payments) {
+      if (payment.voidedAt) continue;
       paidByCustomer.set(payment.customerId, (paidByCustomer.get(payment.customerId) ?? 0) + payment.amount);
     }
 
@@ -172,6 +173,20 @@ export const customerService = {
     const customer = mapCustomer(data);
     emitDataChanged('customer');
     return customer;
+  },
+
+  async restore(id: string) {
+    if (!supabase) {
+      const customer = demoCustomerStore.find((item) => item.id === id);
+      if (!customer) throw new Error('Müşteri bulunamadı.');
+      customer.isActive = true;
+      emitDataChanged('customer');
+      return customer;
+    }
+    const { data, error } = await supabase.from('customers').update({ is_active: true }).eq('id', id).select('*').single();
+    if (error) throw error;
+    emitDataChanged('customer');
+    return mapCustomer(data);
   },
 
   async archive(id: string) {

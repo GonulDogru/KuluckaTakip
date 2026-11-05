@@ -56,6 +56,9 @@ export type Batch = {
 };
 
 export type Payment = {
+  voidedAt?: string | null;
+  voidReason?: string | null;
+  updatedAt?: string;
   id: string;
   customerId: string;
   batchId: string;
@@ -67,6 +70,7 @@ export type Payment = {
 };
 
 export type SmsLog = {
+  needsReview?: boolean;
   id: string;
   customerId: string | null;
   batchId: string | null;

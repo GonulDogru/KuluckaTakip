@@ -25,12 +25,30 @@ set secret_hash = excluded.secret_hash,
 
 insert into public.sms_logs (id, phone, message, status)
 values
-  ('30000000-0000-4000-8000-000000000001', '+15550000001', 'test claim', 'QUEUED'),
-  ('30000000-0000-4000-8000-000000000002', '+15550000002', 'test sent', 'QUEUED'),
-  ('30000000-0000-4000-8000-000000000003', '+15550000003', 'test failed', 'QUEUED'),
+  ('30000000-0000-4000-8000-000000000001', '+905555000001', 'test claim', 'QUEUED'),
+  ('30000000-0000-4000-8000-000000000002', '+905555000002', 'test sent', 'QUEUED'),
+  ('30000000-0000-4000-8000-000000000003', '+905555000003', 'test failed', 'QUEUED'),
   ('30000000-0000-4000-8000-000000000004', '+905551234567', 'confirmed test message', 'QUEUED'),
-  ('30000000-0000-4000-8000-000000000005', '+15550000005', 'unregistered device test', 'QUEUED'),
-  ('30000000-0000-4000-8000-000000000006', '+15550000006', 'preserve this queued record', 'QUEUED');
+  ('30000000-0000-4000-8000-000000000005', '+905555000005', 'unregistered device test', 'QUEUED'),
+  ('30000000-0000-4000-8000-000000000006', '+905555000006', 'preserve this queued record', 'QUEUED');
+
+-- Claims now require a current customer and dated batch. Keep fixtures representative.
+insert into public.customers(id, first_name, last_name, phone, phone_normalized)
+select ('11000000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid, 'SMS', 'Test',
+  case when n = 4 then '+905551234567' else '+90555500000' || n end,
+  case when n = 4 then '+905551234567' else '+90555500000' || n end
+from generate_series(1, 6) n;
+insert into public.batches(id, batch_no, customer_id, egg_type_id, egg_count, received_date, incubation_date, unit_price)
+select ('12000000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid, 'P-SMS-TEST-' || n,
+  ('11000000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid,
+  (select id from public.egg_types where name = 'Tavuk'), 1, current_date, current_date, 1
+from generate_series(1, 6) n;
+delete from public.sms_logs where batch_id in (
+  select id from public.batches where batch_no like 'P-SMS-TEST-%'
+);
+update public.sms_logs s set customer_id = c.id, batch_id = b.id, message_is_custom = true
+from public.customers c join public.batches b on b.customer_id = c.id
+where c.id::text like '11000000-0000-4000-8000-%' and s.phone = c.phone_normalized;
 
 create temporary table sms_test_claims (
   sms_id uuid primary key,
@@ -151,7 +169,7 @@ with claim as (
     '30000000-0000-4000-8000-000000000001',
     '20000000-0000-4000-8000-000000000001',
     'test-device-a',
-    '+15550000001',
+    '+905555000001',
     'test claim'
   )
 )
@@ -170,7 +188,7 @@ select extensions.is(
     '30000000-0000-4000-8000-000000000001',
     '20000000-0000-4000-8000-000000000002',
     'test-device-b',
-    '+15550000001',
+    '+905555000001',
     'test claim'
   )),
   false,
@@ -202,7 +220,7 @@ select extensions.is(
     '30000000-0000-4000-8000-000000000003',
     '20000000-0000-4000-8000-000000000097',
     'unregistered-device-a',
-    '+15550000003',
+    '+905555000003',
     'test failed'
   )),
   true,
@@ -213,7 +231,7 @@ select extensions.is(
     '30000000-0000-4000-8000-000000000005',
     '20000000-0000-4000-8000-000000000098',
     'unregistered-device-b',
-    '+15550000005',
+    '+905555000005',
     'unregistered device test'
   )),
   true,
@@ -248,7 +266,7 @@ select extensions.is(
     '30000000-0000-4000-8000-000000000001',
     '20000000-0000-4000-8000-000000000002',
     'test-device-b',
-    '+15550000001',
+    '+905555000001',
     'test claim'
   )),
   false,
@@ -260,13 +278,15 @@ select extensions.is(
   'an authorized user can explicitly approve a retry'
 );
 
+do $$ begin perform public.queue_sms('30000000-0000-4000-8000-000000000001'); end; $$;
+
 with claim as (
   select * from public.claim_sms_for_send(
     '30000000-0000-4000-8000-000000000001',
     '20000000-0000-4000-8000-000000000002',
     'test-device-b',
-    '+15550000001',
-    'test claim'
+    '+905555000001',
+    (select message from public.sms_logs where id = '30000000-0000-4000-8000-000000000001')
   )
 )
 insert into sms_test_claims (sms_id, claim_token)
@@ -302,7 +322,7 @@ with claim as (
     '30000000-0000-4000-8000-000000000002',
     '20000000-0000-4000-8000-000000000001',
     'test-device-a',
-    '+15550000002',
+    '+905555000002',
     'test sent'
   )
 )
@@ -333,7 +353,7 @@ select extensions.is(
     '30000000-0000-4000-8000-000000000002',
     '20000000-0000-4000-8000-000000000002',
     'test-device-b',
-    '+15550000002',
+    '+905555000002',
     'test sent'
   )),
   false,
@@ -352,7 +372,7 @@ select extensions.is(
     '30000000-0000-4000-8000-000000000006',
     '20000000-0000-4000-8000-000000000099',
     'unapproved-device',
-    '+15550000006',
+    '+905555000006',
     'preserve this queued record'
   )),
   false,
@@ -367,7 +387,7 @@ select extensions.is(
 
 select extensions.is(
   (select status || '|' || phone || '|' || message from public.sms_logs where id = '30000000-0000-4000-8000-000000000006'),
-  'QUEUED|+15550000006|preserve this queued record',
+  'QUEUED|+905555000006|preserve this queued record',
   'an unrelated queued SMS record remains unchanged'
 );
 

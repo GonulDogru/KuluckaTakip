@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.telephony.SmsManager
+import android.telephony.TelephonyManager
 import androidx.core.content.ContextCompat
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
@@ -16,13 +17,24 @@ import expo.modules.kotlin.modules.ModuleDefinition
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
+@Suppress("DEPRECATION")
+private fun supportsSms(context: Context): Boolean {
+  val packageManager = context.packageManager
+  if (packageManager.hasSystemFeature(PackageManager.FEATURE_TELEPHONY_MESSAGING)) return true
+  // Some upgraded Android 13 phones (including MIUI) expose only the older feature.
+  // Confirm SMS capability as well so data-only cellular devices are not accepted.
+  if (!packageManager.hasSystemFeature(PackageManager.FEATURE_TELEPHONY)) return false
+  val telephony = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+  return telephony?.isSmsCapable == true
+}
+
 class ExpoSimSmsModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("ExpoSimSms")
 
     Function("isAvailable") {
       val context = appContext.reactContext ?: return@Function false
-      context.packageManager.hasSystemFeature(PackageManager.FEATURE_TELEPHONY_MESSAGING)
+      supportsSms(context)
     }
 
     AsyncFunction("sendSms") { destination: String, body: String, promise: Promise ->
@@ -35,7 +47,7 @@ class ExpoSimSmsModule : Module() {
         promise.resolve(mapOf("status" to "failed", "code" to "permission_denied"))
         return@AsyncFunction
       }
-      if (!context.packageManager.hasSystemFeature(PackageManager.FEATURE_TELEPHONY_MESSAGING)) {
+      if (!supportsSms(context)) {
         promise.resolve(mapOf("status" to "failed", "code" to "no_telephony"))
         return@AsyncFunction
       }

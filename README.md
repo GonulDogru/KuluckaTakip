@@ -2,7 +2,7 @@
 
 Kuluçka işletmeleri için geliştirilen Android uygulaması. Müşteri kayıtlarını, yumurta kabullerini, ödemeleri ve SMS bildirimlerini tek yerden takip etmeyi sağlar.
 
-**Sürüm:** 1.1.2 · **Platform:** Android 7+ · **Teknolojiler:** Expo SDK 57, React Native, TypeScript, Supabase
+**Sürüm:** 1.1.4 · **Platform:** Android 7+ · **Teknolojiler:** Expo SDK 57, React Native, TypeScript, Supabase
 
 ## Özellikler
 
@@ -39,20 +39,28 @@ Kuluçka işletmeleri için geliştirilen Android uygulaması. Müşteri kayıtl
   </tr>
 </table>
 
+## 1.1.4 ile gelenler
+
+Redmi/MIUI telefonlarda SMS desteğinin yanlışlıkla “modül eksik” olarak algılanması düzeltildi. SMS Merkezi cihaz desteğini ayrıca gösterir. Ayrıntılar: [1.1.4 sürüm notları](docs/UPDATE_1.1.4.md).
+
+## 1.1.3 ile gelenler
+
+Telefon alanının klavye altında kalması düzeltildi; SMS son satırına Yalınayak Süs Tavukları 🐔 imzası eklendi. Kayıt/ödeme tekrar denemeleri, ödeme düzeltme/iptali ve müşteri/SMS tutarlılığı iyileştirildi. Sunucu migration’ları uygulandı; her iki imza serisinde APK üretildi. Ayrıntılar: [1.1.3 sürüm notları](docs/UPDATE_1.1.3.md).
+
 ## 1.1.2 ile gelenler
 
 Yumurta kayıtlarında birleşik filtreler, Türkçe karakterleri destekleyen arama ve aranabilir seçim listeleri eklendi. Filtre seçimleri ekran yenilenirken ve kayıt detayından dönülürken korunur. Ayrıntılar: [1.1.2 sürüm notları](docs/UPDATE_1.1.2.md).
 
 ## Yeni telefona kurulum
 
-1. `output/releases/KuluckaTakip-1.1.2.apk` dosyasını Android telefona aktarın ve açın.
+1. `output/releases/KuluckaTakip-1.1.4.apk` dosyasını Android telefona aktarın ve açın.
 2. Telefon isterse dosyayı açan uygulamaya bu kaynaktan kurulum izni verin.
 3. İnternet bağlantısıyla yetkili hesabınızla giriş yapın. Diğer telefonlarla aynı işletme kayıtları Supabase üzerinden kullanılır.
 4. SMS izni yalnız gerçekten mesaj göndermek istediğinizde istenir. SIM ve varsayılan SMS hattı gerekir; kayıtları görüntülemek için SMS izni gerekmez.
 
 Uygulama bilgisayar, Metro veya Expo Go bağlantısı olmadan çalışır. Sunucu kayıtları için internet gerekir; çevrimdışı kayıt ve senkronizasyon kuyruğu yoktur. Paket Android 7 ve üzeri ARM 32/64 bit telefonlar içindir; iPhone kurulum paketi değildir.
 
-Daha önce geliştirme sürümü yüklenmiş telefonlarda `KuluckaTakip-1.1.2-mevcut-telefon-guncelleme.apk` dosyası kullanılır. Bu paket mevcut imzayı korur. Yeni dağıtım anahtarıyla imzalanan standart APK eski geliştirme imzasının üzerine kurulamaz; mevcut uygulamayı ve verilerini silmeyin. Sonraki güncellemelerde her telefon için aynı imza serisi kullanılmalıdır.
+Daha önce geliştirme sürümü yüklenmiş telefonlarda `KuluckaTakip-1.1.4-mevcut-telefon-guncelleme.apk` dosyası kullanılır. Bu paket mevcut imzayı korur. Yeni dağıtım anahtarıyla imzalanan standart APK eski geliştirme imzasının üzerine kurulamaz; mevcut uygulamayı ve verilerini silmeyin. Sonraki güncellemelerde her telefon için aynı imza serisi kullanılmalıdır.
 
 ## Hesap ve sunucu
 
@@ -99,3 +107,8 @@ Komut sunucu ayarlarını, TypeScript'i ve testleri kontrol eder; Hermes içeren
 ## Lisans
 
 Lisans koşulları için [LICENSE](LICENSE) dosyasına bakın.
+
+
+## Hazırlanan akış düzeltmeleri — 5 Kasım 2026
+
+Kabul/ödeme tekrar denemeleri, tarih ve SMS tutarlılığı, ödeme düzeltme/iptali ve arşivden geri alma 1.1.3 sürümüne alındı. İlgili sunucu migration’ları uygulandı; 1.1.3 APK’ları bu değişiklikleri içerir. [Düzeltmeler, kontroller ve geçiş sırası](docs/FLOW_FIXES_2026-11-05.md).

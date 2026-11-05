@@ -1,3 +1,4 @@
+import { runPendingOperation } from './pendingOperation';
 import { readAllRows } from './readAllRows';
 import { cacheReads } from './queryCache';
 import { demoPayments } from '../data/demoData';
@@ -10,17 +11,7 @@ const demoPaymentStore: Payment[] = [...demoPayments];
 
 type CreatePaymentInput = Omit<Payment, 'id' | 'createdAt'>;
 
-// model (camelCase) -> DB kolonları (snake_case) eşlemesi. Yalnızca dolu alanlar gönderilir.
-function toPaymentRow(input: Partial<CreatePaymentInput>) {
-  const row: Record<string, unknown> = {};
-  if (input.customerId !== undefined) row.customer_id = input.customerId;
-  if (input.batchId !== undefined) row.batch_id = input.batchId;
-  if (input.amount !== undefined) row.amount = input.amount;
-  if (input.paymentMethod !== undefined) row.payment_method = input.paymentMethod;
-  if (input.paymentDate !== undefined) row.payment_date = input.paymentDate;
-  if (input.note !== undefined) row.note = input.note;
-  return row;
-}
+export type PaymentWriteInput = CreatePaymentInput & { id?: string; expectedUpdatedAt?: string; void?: boolean; reason?: string };
 
 export const paymentService = {
   async list() {
@@ -69,42 +60,32 @@ export const paymentService = {
       return payment;
     }
 
-    const { data, error } = await supabase
-      .from('payments')
-      .insert({
-        customer_id: input.customerId,
-        batch_id: input.batchId,
-        amount: input.amount,
-        payment_method: input.paymentMethod,
-        payment_date: input.paymentDate,
-        note: input.note,
-      })
-      .select('*')
-      .single();
-    if (error) throw error;
-    const payment = mapPayment(data);
-    emitDataChanged('payment');
-    return payment;
+    return this.save(input);
   },
 
-  async update(id: string, input: Partial<CreatePaymentInput>) {
-    if (!isSupabaseConfigured || !supabase) {
-      const index = demoPaymentStore.findIndex((payment) => payment.id === id);
-      if (index < 0) return null;
-      demoPaymentStore[index] = { ...demoPaymentStore[index], ...input };
+  async save(input: PaymentWriteInput): Promise<Payment> {
+    if (!supabase) {
+      if (!input.id) return this.create(input);
+      const index = demoPaymentStore.findIndex((p) => p.id === input.id);
+      if (index < 0) throw new Error('Ödeme bulunamadı.');
+      demoPaymentStore[index] = { ...demoPaymentStore[index], ...input,
+        voidedAt: input.void ? new Date().toISOString() : null, voidReason: input.reason };
       emitDataChanged('payment');
       return demoPaymentStore[index];
     }
-
-    const { data, error } = await supabase.from('payments').update(toPaymentRow(input)).eq('id', id).select('*').single();
-    if (error) throw error;
-    const payment = mapPayment(data);
+    const client = supabase;
+    const payment = await runPendingOperation(`payment:${input.batchId}`, input, async (id, payload) => {
+      const { data, error } = await client.rpc('save_payment', { p_request_id: id, p_input: payload });
+      if (error) throw error;
+      if (!data?.id) throw new Error('Ödeme sonucu doğrulanamadı. Aynı işlemi yeniden deneyin.');
+      return mapPayment(data);
+    });
     emitDataChanged('payment');
     return payment;
   },
 
   calculatePaidTotal(payments: Payment[]) {
-    return payments.reduce((sum, payment) => sum + payment.amount, 0);
+    return payments.reduce((sum, payment) => sum + (payment.voidedAt ? 0 : payment.amount), 0);
   },
 
   calculateRemainingDebt(totalPrice: number, payments: Payment[]) {

@@ -1,18 +1,21 @@
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { PermissionsAndroid, Platform } from 'react-native';
-import { demoCustomers, demoEggTypes } from '../data/demoData';
+import { customerService } from './customerService';
+import { eggTypeService } from './eggTypeService';
 import type { Batch, Customer, EggType, SmsLog } from '../types/models';
 import { formatDateTR, isValidDateOnly } from '../utils/dateRules';
-import { mapCustomer, mapEggType, mapSmsLog } from './mappers';
+import { mapSmsLog } from './mappers';
 import { emitDataChanged } from './dataEvents';
 import { getSmsDeviceIdentity } from './smsDeviceIdentity';
-import { isDirectSimSmsAvailable, sendDirectSimSms, type NativeSmsResult } from '../../modules/sim-sms';
+import { isDirectSimSmsModuleInstalled, isDirectSimSmsAvailable, sendDirectSimSms, type NativeSmsResult } from '../../modules/sim-sms';
 import { normalizeTurkishPhone } from '../utils/phone';
 import { readAllRows } from './readAllRows';
+import { withSmsSignature } from '../utils/smsSignature';
 
 const demoSmsStore: SmsLog[] = [];
+const demoCustomMessages = new Set<string>();
 let nextDemoSmsId = 0;
-const smsLogColumns = 'id,customer_id,batch_id,phone,message,status,created_at,provider_response,claimed_by,lease_until';
+const smsLogColumns = 'id,customer_id,batch_id,phone,message,status,created_at,provider_response,claimed_by,lease_until,needs_review';
 
 type HatchSmsInput = {
   customer: Customer;
@@ -37,7 +40,8 @@ export type SmsSendConfirmation = {
   message: string;
 };
 
-export type SmsPermissionResult = 'granted' | 'denied' | 'never_ask_again' | 'unsupported' | 'native_unavailable';
+export type SmsDeviceSupportStatus = 'available' | 'unsupported' | 'native_unavailable' | 'no_telephony' | 'device_unavailable';
+export type SmsPermissionResult = 'granted' | 'denied' | 'never_ask_again' | Exclude<SmsDeviceSupportStatus, 'available'>;
 
 export type SmsAttemptResult = {
   status: 'sent' | 'failed' | 'unknown' | 'not_claimed' | 'permission_denied' | 'unavailable';
@@ -55,7 +59,7 @@ function nativeResultMessage(result: NativeSmsResult) {
     case 'sim_or_radio_unavailable': return 'SIM veya mobil şebeke durumu belirlenemedi.';
     case 'send_callback_timeout': return 'Android gönderim sonucu zamanında bildirmedi; mesaj tekrar gönderilmedi.';
     case 'partial_multipart_result': return 'Çok parçalı SMS sonucunun bir bölümü belirsiz; mesaj tekrar gönderilmedi.';
-    case 'native_module_missing': return 'Doğrudan SIM gönderimi için ExpoSimSms native modülünü içeren bir Android APK gerekiyor.';
+    case 'native_module_missing': return 'Bu kurulumda SMS bileşeni yüklenemedi. Uygulamayı güncelleyin.';
     default: return result.status === 'unknown'
       ? 'Gönderim sonucu doğrulanamadı; olası çift gönderimi önlemek için otomatik tekrar yapılmadı.'
       : 'SMS gönderimi başarısız.';
@@ -73,10 +77,21 @@ export function buildHatchSmsMessage({ customer, batch, eggType }: HatchSmsInput
   const eggTypeName = eggType.name.toLocaleLowerCase('tr-TR');
   const expectedHatchDate = formatDateTR(batch.expectedHatchDate);
 
-  return `Sayın ${customerName}, ${batch.eggCount} adet ${eggTypeName} yumurtanızın tahmini çıkım tarihi ${expectedHatchDate}'dır.`;
+  return withSmsSignature(`Sayın ${customerName}, ${batch.eggCount} adet ${eggTypeName} yumurtanızın tahmini çıkım tarihi ${expectedHatchDate}'dır.`);
 }
 
 export const smsService = {
+  getDeviceSupport(): { status: SmsDeviceSupportStatus; detail: string } {
+    if (Platform.OS !== 'android') return { status: 'unsupported', detail: 'SIM üzerinden SMS gönderimi Android telefonda kullanılabilir.' };
+    if (!isDirectSimSmsModuleInstalled()) return { status: 'native_unavailable', detail: 'Bu kurulumda SMS bileşeni yüklenemedi. Uygulamayı güncelleyin.' };
+    try {
+      if (!isDirectSimSmsAvailable()) return { status: 'no_telephony', detail: 'Bu cihazda SIM üzerinden SMS gönderme desteği algılanamadı.' };
+      return { status: 'available', detail: 'Bu telefonun SIM üzerinden SMS desteği algılandı.' };
+    } catch {
+      return { status: 'device_unavailable', detail: 'Telefonun SMS desteği kontrol edilemedi. Uygulamayı yeniden açıp deneyin.' };
+    }
+  },
+
   async list(): Promise<SmsLog[]> {
     if (!isSupabaseConfigured || !supabase) {
       return [...demoSmsStore].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -96,6 +111,13 @@ export const smsService = {
   },
 
   async createHatchDraft({ customer, batch, eggType }: HatchSmsInput): Promise<HatchSmsDraftResult> {
+    if (supabase) {
+      const { data, error } = await supabase.rpc('ensure_hatch_sms', { p_batch_id: batch.id });
+      if (error) throw error;
+      if (!data?.id) return { created: false, reason: 'SMS için geçerli bir kuluçka tarihi ve aktif müşteri gerekir.' };
+      emitDataChanged('sms');
+      return { created: true, sms: mapSmsLog(data) };
+    }
     const phone = customer.phoneNormalized?.trim() || customer.phone?.trim();
     if (!phone) {
       return { created: false, reason: 'Telefon numarası bulunmuyor. SMS taslağı oluşturulmadı.' };
@@ -106,6 +128,8 @@ export const smsService = {
     }
 
     if (!isValidDateOnly(batch.expectedHatchDate)) {
+      const existing = demoSmsStore.find((item) => item.batchId === batch.id);
+      if (existing && ['PENDING', 'QUEUED', 'FAILED'].includes(existing.status)) { existing.status = 'PENDING'; existing.needsReview = true; }
       return { created: false, reason: 'Tahmini çıkım tarihi bulunmuyor. SMS taslağı oluşturulmadı.' };
     }
 
@@ -119,7 +143,9 @@ export const smsService = {
         }
         existing.customerId = customer.id;
         existing.phone = phone;
-        existing.message = message;
+        if (!demoCustomMessages.has(existing.id)) existing.message = message;
+        if (existing.status === 'QUEUED') existing.status = 'PENDING';
+        existing.needsReview = true;
         emitDataChanged('sms');
         return { created: false, sms: existing, reason: 'Mevcut SMS taslağı güncellendi.' };
       }
@@ -138,71 +164,14 @@ export const smsService = {
       return { created: true, sms };
     }
 
-    const { data: existingRows, error: existingError } = await supabase
-      .from('sms_logs')
-      .select(smsLogColumns)
-      .eq('batch_id', batch.id)
-      .order('created_at', { ascending: true })
-      .limit(1);
-    if (existingError) throw existingError;
-
-    const existingRow = existingRows?.[0];
-    if (existingRow) {
-      const existing = mapSmsLog(existingRow);
-      if (['SENT', 'DELIVERED'].includes(existing.status.toUpperCase())) {
-        return { created: false, sms: existing, reason: 'Bu yumurta kabuline ait SMS zaten gönderilmiş; kayıt değiştirilmedi.' };
-      }
-
-      const { data, error } = await supabase.rpc('update_hatch_sms_draft', {
-        p_sms_id: existing.id,
-        p_customer_id: customer.id,
-        p_phone: phone,
-        p_message: message,
-      });
-      if (error) throw error;
-      if (!data) throw new Error('Mevcut SMS taslağı güncellenemedi.');
-      const sms = mapSmsLog(data);
-      emitDataChanged('sms');
-      return { created: false, sms, reason: 'Mevcut SMS taslağı güncellendi.' };
-    }
-
-    const { data, error } = await supabase
-      .from('sms_logs')
-      .insert({
-        customer_id: customer.id,
-        batch_id: batch.id,
-        phone,
-        message,
-      })
-      .select(smsLogColumns)
-      .single();
-    if (error) throw error;
-
-    const sms = mapSmsLog(data);
-    emitDataChanged('sms');
-    return { created: true, sms };
+    throw new Error('SMS taslağı oluşturulamadı.');
   },
 
   async syncHatchDraftForBatch(batch: Batch): Promise<HatchSmsDraftResult> {
-    let customer: Customer | null;
-    let eggType: EggType | null;
-
-    if (!isSupabaseConfigured || !supabase) {
-      customer = demoCustomers.find((item) => item.id === batch.customerId) ?? null;
-      eggType = demoEggTypes.find((item) => item.id === batch.eggTypeId) ?? null;
-    } else {
-      const [customerResult, eggTypeResult] = await Promise.all([
-        supabase.from('customers').select('*').eq('id', batch.customerId).maybeSingle(),
-        supabase.from('egg_types').select('*').eq('id', batch.eggTypeId).maybeSingle(),
-      ]);
-      if (customerResult.error) throw customerResult.error;
-      if (eggTypeResult.error) throw eggTypeResult.error;
-      customer = customerResult.data ? mapCustomer(customerResult.data) : null;
-      eggType = eggTypeResult.data ? mapEggType(eggTypeResult.data) : null;
-    }
-
-    if (!customer) return { created: false, reason: 'Müşteri kaydı bulunamadı. SMS taslağı oluşturulmadı.' };
-    if (!eggType) return { created: false, reason: 'Yumurta türü bulunamadı. SMS taslağı oluşturulmadı.' };
+    const [customer, eggType] = await Promise.all([
+      customerService.getById(batch.customerId), eggTypeService.getById(batch.eggTypeId),
+    ]);
+    if (!customer || !eggType) return { created: false, reason: 'Müşteri veya yumurta türü bulunamadı.' };
     return this.createHatchDraft({ customer, batch, eggType });
   },
 
@@ -211,6 +180,7 @@ export const smsService = {
     if (!normalizedMessage) {
       throw new Error('SMS mesajı boş olamaz.');
     }
+    const signedMessage = withSmsSignature(normalizedMessage);
 
     if (!isSupabaseConfigured || !supabase) {
       const sms = demoSmsStore.find((item) => item.id === id);
@@ -218,14 +188,16 @@ export const smsService = {
       if (sms.status.toUpperCase() === 'SENT' || sms.status.toUpperCase() === 'DELIVERED') {
         throw new Error('Gönderilmiş SMS düzenlenemez.');
       }
-      sms.message = normalizedMessage;
+      sms.message = signedMessage;
+      demoCustomMessages.add(id);
+      if (sms.status === 'QUEUED') sms.status = 'PENDING';
       emitDataChanged('sms');
       return sms;
     }
 
     const { data, error } = await supabase.rpc('update_sms_message', {
       p_sms_id: id,
-      p_message: normalizedMessage,
+      p_message: signedMessage,
     });
     if (error) throw error;
     if (!data) throw new Error('SMS mesajı güncellenemedi.');
@@ -260,7 +232,8 @@ export const smsService = {
     const queueResult = Array.isArray(data) ? data[0] : data;
     if (queueResult?.already_queued === true) return { sms, alreadyQueued: true };
     if (queueResult?.queued !== true) throw new Error('SMS kuyruğa eklenemedi.');
-    const queuedSms = { ...sms, status: 'QUEUED' };
+    const queuedSms = await this.getById(id);
+    if (!queuedSms) throw new Error('SMS kuyruğa eklendi ancak güncel kayıt alınamadı. Listeyi yenileyin.');
     emitDataChanged('sms');
     return { sms: queuedSms, alreadyQueued: false };
   },
@@ -313,8 +286,8 @@ export const smsService = {
   },
 
   async requestSmsPermission(): Promise<SmsPermissionResult> {
-    if (Platform.OS !== 'android') return 'unsupported';
-    if (!isDirectSimSmsAvailable()) return 'native_unavailable';
+    const support = this.getDeviceSupport();
+    if (support.status !== 'available') return support.status;
     const result = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.SEND_SMS);
     if (result === PermissionsAndroid.RESULTS.GRANTED) return 'granted';
     return result === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN ? 'never_ask_again' : 'denied';
@@ -324,11 +297,12 @@ export const smsService = {
     if (!isSupabaseConfigured || !supabase) {
       return { status: 'unavailable', stateSaved: false, detail: 'Gerçek SMS gönderimi için Supabase bağlantısı gereklidir.' };
     }
-    if (Platform.OS !== 'android' || !isDirectSimSmsAvailable()) {
+    const support = this.getDeviceSupport();
+    if (support.status !== 'available') {
       return {
         status: 'unavailable',
         stateSaved: false,
-        detail: 'Doğrudan SIM gönderimi için ExpoSimSms native modülünü içeren bir Android APK gerekir.',
+        detail: support.detail,
       };
     }
 
@@ -354,13 +328,13 @@ export const smsService = {
     const permission = await this.requestSmsPermission();
     if (permission !== 'granted') {
       return {
-        status: permission === 'native_unavailable' || permission === 'unsupported' ? 'unavailable' : 'permission_denied',
+        status: permission === 'denied' || permission === 'never_ask_again' ? 'permission_denied' : 'unavailable',
         stateSaved: false,
         detail: permission === 'never_ask_again'
           ? 'SMS izni kalıcı olarak reddedildi. Android uygulama ayarlarından SMS iznini açın.'
           : permission === 'denied'
             ? 'SMS izni verilmedi; SMS gönderilmedi.'
-            : 'Android SMS modülü kullanılamıyor.',
+            : this.getDeviceSupport().detail,
       };
     }
 

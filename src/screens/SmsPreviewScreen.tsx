@@ -1,7 +1,7 @@
 import { smsStatusLabel } from '../utils/smsStatus';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusedRefresh } from '../hooks/useFocusedRefresh';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { Screen } from '../components/Screen';
@@ -29,39 +29,32 @@ export function SmsPreviewScreen({ navigation, route }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useFocusEffect(useCallback(() => {
-    let active = true;
-    async function load() {
-      setLoading(true);
-      setError(null);
-      try {
-        const smsLog = await smsService.getById(route.params.smsId);
-        if (!smsLog) throw new Error('SMS kaydı bulunamadı.');
-
-        const [customerData, batchData, eggTypes] = await Promise.all([
-          smsLog.customerId ? customerService.getById(smsLog.customerId) : Promise.resolve(null),
-          smsLog.batchId ? batchService.getById(smsLog.batchId) : Promise.resolve(null),
-          eggTypeService.list(),
-        ]);
-        if (active) {
-          setSms(smsLog);
-          setCustomer(customerData);
-          setBatch(batchData);
-          setEggType(batchData ? eggTypes.find((item) => item.id === batchData.eggTypeId) ?? null : null);
-          setMessageDraft(smsLog.message);
-          setEditing(false);
-        }
-      } catch (loadError) {
-        if (active) {
-          setError(loadError instanceof Error ? loadError.message : 'SMS önizlemesi yüklenemedi.');
-        }
-      } finally {
-        if (active) setLoading(false);
-      }
+  const loadVersion = useRef(0);
+  const load = useCallback(async () => {
+    const version = ++loadVersion.current;
+    setLoading(true);
+    setError(null);
+    try {
+      const smsLog = await smsService.getById(route.params.smsId);
+      if (!smsLog) throw new Error('SMS kaydı bulunamadı.');
+      const [customerData, batchData, eggTypes] = await Promise.all([
+        smsLog.customerId ? customerService.getById(smsLog.customerId) : Promise.resolve(null),
+        smsLog.batchId ? batchService.getById(smsLog.batchId) : Promise.resolve(null), eggTypeService.list(),
+      ]);
+      if (version !== loadVersion.current) return;
+      setSms(smsLog);
+      setCustomer(customerData);
+      setBatch(batchData);
+      setEggType(batchData ? eggTypes.find((item) => item.id === batchData.eggTypeId) ?? null : null);
+      setMessageDraft(smsLog.message);
+      setEditing(false);
+    } catch (error) {
+      if (version === loadVersion.current) setError(error instanceof Error ? error.message : 'SMS önizlemesi yüklenemedi.');
+    } finally {
+      if (version === loadVersion.current) setLoading(false);
     }
-    void load();
-    return () => { active = false; };
-  }, [route.params.smsId]));
+  }, [route.params.smsId]);
+  useFocusedRefresh(() => { void load(); }, ['batch', 'customer', 'eggType']);
 
   async function saveMessage() {
     if (!sms || saving) return;
@@ -107,7 +100,7 @@ export function SmsPreviewScreen({ navigation, route }: Props) {
       setMessageDraft(refreshed.message);
       Alert.alert('SMS uzlaştırıldı', resolution === 'sent'
         ? 'Kayıt gönderildi olarak işaretlendi; yeni gönderim yapılmadı.'
-        : 'SMS ortak kuyruğa alındı. Bir sonraki SIM gönderimi için ayrıca açık onay gerekir.');
+        : 'SMS yeniden kontrol için taslaklara alındı. Bir sonraki SIM gönderimi için ayrıca açık onay gerekir.');
     } catch (resolveError) {
       Alert.alert('Uzlaştırılamadı', resolveError instanceof Error ? resolveError.message : 'SMS durumu güncellenemedi.');
     }
@@ -154,6 +147,7 @@ export function SmsPreviewScreen({ navigation, route }: Props) {
     <Screen>
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.title}>SMS Önizleme</Text>
+        {sms.needsReview ? <Text style={styles.error}>Kabul veya müşteri bilgileri değişti. Alıcıyı ve mesajı kontrol ederek yeniden kuyruğa alın.</Text> : null}
         <View style={styles.detailsCard}>
           <Text style={styles.label}>Alıcı</Text>
           <Text style={styles.value}>{customerName}</Text>

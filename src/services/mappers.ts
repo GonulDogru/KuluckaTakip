@@ -48,6 +48,7 @@ export function mapEggType(row: Record<string, any>): EggType {
 
 export function mapPayment(row: Record<string, any>): Payment {
   return {
+    voidedAt: row.voided_at ?? null, voidReason: row.void_reason ?? null, updatedAt: row.updated_at,
     id: row.id,
     customerId: row.customer_id,
     batchId: row.batch_id,
@@ -61,6 +62,7 @@ export function mapPayment(row: Record<string, any>): Payment {
 
 export function mapSmsLog(row: Record<string, any>): SmsLog {
   return {
+    needsReview: row.needs_review === true,
     id: row.id,
     customerId: row.customer_id,
     batchId: row.batch_id,

@@ -46,6 +46,13 @@ export const eggTypeService = {
     return eggTypes.find((eggType) => eggType.id === id) ?? null;
   },
 
+  async getBreedById(id: string): Promise<Breed | null> {
+    if (!supabase) return demoBreeds.find((b) => b.id === id) ?? null;
+    const { data, error } = await supabase.from('breeds').select('*').eq('id', id).maybeSingle();
+    if (error) throw error;
+    return data ? { id: data.id, eggTypeId: data.egg_type_id, name: data.name, active: data.active, createdAt: data.created_at } : null;
+  },
+
   async listBreeds(eggTypeId?: string) {
     if (!isSupabaseConfigured || !supabase) {
       return demoBreeds.filter((breed) => breed.active && (!eggTypeId || breed.eggTypeId === eggTypeId));

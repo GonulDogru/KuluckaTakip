@@ -1,6 +1,6 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusedRefresh } from '../hooks/useFocusedRefresh';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { InfoCard } from '../components/InfoCard';
 import { PrimaryButton } from '../components/PrimaryButton';
@@ -44,47 +44,39 @@ export function CustomerDetailScreen({ navigation, route }: Props) {
   const [eggTypeError, setEggTypeError] = useState<string | null>(null);
   const [archiving, setArchiving] = useState(false);
 
-  useFocusEffect(useCallback(() => {
-    let active = true;
-    async function load() {
-      setLoading(true);
-      setError(null);
-      setEggTypeError(null);
+  const loadVersion = useRef(0);
+  const load = useCallback(async () => {
+    const version = ++loadVersion.current;
+    setLoading(true);
+    setError(null);
+    setEggTypeError(null);
+    try {
+      const [customerData, batchData, paymentData] = await Promise.all([
+        customerService.getById(route.params.customerId),
+        batchService.listByCustomer(route.params.customerId), paymentService.listByCustomer(route.params.customerId),
+      ]);
+      if (version !== loadVersion.current) return;
+      setCustomer(customerData);
+      setBatches(batchData);
+      setPayments(paymentData);
       try {
-        const [customerData, batchData, paymentData] = await Promise.all([
-          customerService.getById(route.params.customerId),
-          batchService.listByCustomer(route.params.customerId),
-          paymentService.listByCustomer(route.params.customerId),
-        ]);
-        if (active) {
-          setCustomer(customerData);
-          setBatches(batchData);
-          setPayments(paymentData);
-        }
-        try {
-          const eggTypeData = await eggTypeService.list();
-          if (active) setEggTypes(eggTypeData);
-        } catch (eggTypeLoadError) {
-          if (active) {
-            setEggTypeError(eggTypeLoadError instanceof Error ? eggTypeLoadError.message : 'Yumurta türü bilgileri yüklenemedi.');
-          }
-        }
-      } catch (loadError) {
-        if (active) {
-          setError(loadError instanceof Error ? loadError.message : 'Müşteri bilgileri yüklenemedi.');
-        }
-      } finally {
-        if (active) setLoading(false);
+        const eggTypeData = await eggTypeService.list();
+        if (version === loadVersion.current) setEggTypes(eggTypeData);
+      } catch (error) {
+        if (version === loadVersion.current) setEggTypeError(error instanceof Error ? error.message : 'Yumurta türü bilgileri yüklenemedi.');
       }
+    } catch (error) {
+      if (version === loadVersion.current) setError(error instanceof Error ? error.message : 'Müşteri bilgileri yüklenemedi.');
+    } finally {
+      if (version === loadVersion.current) setLoading(false);
     }
-    void load();
-    return () => { active = false; };
-  }, [route.params.customerId]));
+  }, [route.params.customerId]);
+  useFocusedRefresh(() => { void load(); }, ['customer', 'batch', 'payment', 'eggType']);
 
   function confirmArchive() {
     Alert.alert(
-      'Müşteriyi Sil',
-      'Bu müşteriyi arşivlemek istediğinize emin misiniz?',
+      'Müşteriyi Arşivle',
+      debt > 0 ? `Bu müşterinin ${formatCurrency(debt)} borcu var. Kayıtlar korunacak; yine de arşivlemek istiyor musunuz?` : 'Bu müşteriyi arşivlemek istediğinize emin misiniz?',
       [
         { text: 'Vazgeç', style: 'cancel' },
         { text: 'Arşivle', style: 'destructive', onPress: () => { void archiveCustomer(); } },
@@ -139,18 +131,19 @@ export function CustomerDetailScreen({ navigation, route }: Props) {
             />
             <View style={styles.grid}><InfoCard title="Yumurta kabulü" value={`${batches.length}`} /><InfoCard title="Toplam yumurta" value={`${totalEggs}`} /></View>
             <View style={styles.grid}><InfoCard title="Toplam tutar" value={formatCurrency(totalPrice)} /><InfoCard title="Toplam ödenen" value={formatCurrency(paid)} tone="success" /></View>
-            <View style={styles.grid}><InfoCard title="Toplam borç" value={formatCurrency(debt)} tone="warning" /></View>
+            <View style={styles.grid}><InfoCard title={debt < 0 ? "Müşteri alacağı" : "Toplam borç"} value={formatCurrency(Math.abs(debt))} tone="warning" /></View>
             <Text style={styles.sectionTitle}>Ödemeler</Text>
             {payments.length === 0 ? <Text style={styles.state}>Henüz ödeme kaydı yok.</Text> : payments.map((payment) => (
               <View key={payment.id} style={styles.paymentRow}>
                 <View>
-                  <Text style={styles.paymentDate}>{displayDate(payment.paymentDate)}</Text>
+                  <Text style={styles.paymentDate}>{displayDate(payment.paymentDate)}{payment.voidedAt ? " · İptal" : ""}</Text>
                   <Text style={styles.paymentMethod}>{payment.paymentMethod || 'Ödeme'}</Text>
                 </View>
                 <Text style={styles.paymentAmount}>{formatCurrency(payment.amount)}</Text>
               </View>
             ))}
             <Text style={styles.sectionTitle}>Geçmiş Yumurta Kabulleri</Text>
+            {!customer.isActive ? <PrimaryButton title="Arşivden çıkar" disabled={archiving} onPress={() => { setArchiving(true); void customerService.restore(customer.id).then(() => load()).catch((e: unknown) => Alert.alert('İşlem başarısız', e instanceof Error ? e.message : 'Müşteri geri alınamadı.')).finally(() => setArchiving(false)); }} /> : null}
             {customer.isActive ? <PrimaryButton title="Yeni Yumurta Kabul" onPress={() => navigation.navigate('NewBatch', { customerId: customer.id })} /> : null}
             {customer.isActive ? (
               <Pressable
@@ -159,7 +152,7 @@ export function CustomerDetailScreen({ navigation, route }: Props) {
                 onPress={confirmArchive}
                 style={({ pressed }) => [styles.archiveButton, pressed && styles.archivePressed, archiving && styles.archiveDisabled]}
               >
-                <Text style={styles.archiveText}>{archiving ? 'Arşivleniyor...' : 'Müşteriyi Sil'}</Text>
+                <Text style={styles.archiveText}>{archiving ? 'Arşivleniyor...' : 'Müşteriyi Arşivle'}</Text>
               </Pressable>
             ) : null}
           </View>

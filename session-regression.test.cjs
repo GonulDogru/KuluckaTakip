@@ -4,12 +4,12 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const ts = require('typescript');
 
-function load(file, mocks) {
+function load(file, mocks, globals = {}) {
   const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
   const exports = {};
-  vm.runInNewContext(code, { exports, __DEV__: false, process: { env: {} }, URL,
+  vm.runInNewContext(code, { ...globals, exports, __DEV__: false, process: { env: {} }, URL,
     require(name) {
       if (!(name in mocks)) throw new Error(`Unexpected import: ${name}`);
       return mocks[name];
@@ -18,6 +18,217 @@ function load(file, mocks) {
   return exports;
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
+
+function smsSupportHarness({ installed = true, capable = true, permission = 'granted' } = {}) {
+  const calls = { permission: 0, send: 0, claim: 0 };
+  const native = installed ? {
+    isAvailable() { return capable; }, async sendSms() { calls.send++; throw new Error('Physical send must not be invoked in this test'); },
+  } : null;
+  const module = load('modules/sim-sms/index.ts', { expo: { requireOptionalNativeModule: () => native } });
+  const { smsService } = load('src/services/smsService.ts', {
+    '../lib/supabase': { isSupabaseConfigured: true, supabase: {} },
+    'react-native': { Platform: { OS: 'android' }, PermissionsAndroid: {
+      PERMISSIONS: { SEND_SMS: 'SEND_SMS' }, RESULTS: { GRANTED: 'granted', NEVER_ASK_AGAIN: 'never_ask_again' },
+      async request() { calls.permission++; return permission; },
+    } },
+    './customerService': {}, './eggTypeService': {}, '../utils/dateRules': {}, './mappers': {},
+    './dataEvents': {}, './smsDeviceIdentity': {}, '../../modules/sim-sms': module,
+    '../utils/phone': { normalizeTurkishPhone: () => '+905321234567' }, './readAllRows': {},
+    '../utils/smsSignature': load('src/utils/smsSignature.ts', {}),
+  });
+  smsService.getById = async () => ({ status: 'QUEUED', phone: '+905321234567', message: 'Test' });
+  smsService.claimSms = async () => { calls.claim++; throw new Error('Must not claim in a pre-send failure'); };
+  return { module, service: smsService, calls };
+}
+
+test('installed SMS module is distinguished from a device without SMS hardware', async () => {
+  const h = smsSupportHarness({ capable: false });
+  assert.equal(h.module.isDirectSimSmsModuleInstalled(), true);
+  assert.equal(h.module.isDirectSimSmsAvailable(), false);
+  assert.equal(h.service.getDeviceSupport().status, 'no_telephony');
+  assert.equal(await h.service.requestSmsPermission(), 'no_telephony');
+  assert.equal(h.calls.permission, 0);
+});
+
+test('missing SMS module has its own diagnostic and never requests permissions', async () => {
+  const h = smsSupportHarness({ installed: false });
+  assert.equal(h.module.isDirectSimSmsModuleInstalled(), false);
+  assert.equal(h.service.getDeviceSupport().status, 'native_unavailable');
+  const result = await h.service.sendQueuedSms('sms-1', { phone: '+905321234567', message: 'Test' });
+  assert.equal(result.status, 'unavailable');
+  assert.equal(h.calls.permission + h.calls.claim + h.calls.send, 0);
+});
+
+test('SMS-capable phone reaches permission request without sending a message', async () => {
+  const h = smsSupportHarness();
+  assert.equal(h.service.getDeviceSupport().status, 'available');
+  assert.equal(await h.service.requestSmsPermission(), 'granted');
+  assert.equal(h.calls.permission, 1);
+  assert.equal(h.calls.send, 0);
+});
+
+test('denied SMS permission cannot claim or physically send a queued message', async () => {
+  const h = smsSupportHarness({ permission: 'denied' });
+  const result = await h.service.sendQueuedSms('sms-1', { phone: '+905321234567', message: 'Test' });
+  assert.equal(result.status, 'permission_denied');
+  assert.equal(h.calls.permission, 1);
+  assert.equal(h.calls.claim + h.calls.send, 0);
+});
+
+test('changed confirmed content cannot request SMS permission or claim a send', async () => {
+  const h = smsSupportHarness();
+  const result = await h.service.sendQueuedSms('sms-1', { phone: '+905321234567', message: 'Outdated message' });
+  assert.equal(result.status, 'not_claimed');
+  assert.equal(h.calls.permission + h.calls.claim + h.calls.send, 0);
+});
+
+test('SMS signature occupies the final line and is not duplicated on edits', () => {
+  const { withSmsSignature, SMS_SIGNATURE } = load('src/utils/smsSignature.ts', {});
+  assert.equal(withSmsSignature('Mesaj'), `Mesaj\n${SMS_SIGNATURE}`);
+  assert.equal(withSmsSignature(`Mesaj\n${SMS_SIGNATURE}\n  `), `Mesaj\n${SMS_SIGNATURE}`);
+  assert.equal(withSmsSignature(`Mesaj\n${SMS_SIGNATURE}\n${SMS_SIGNATURE}`), `Mesaj\n${SMS_SIGNATURE}`);
+});
+
+test('keyboard scroll accounts for keyboard overlap, resized viewports and current offset', () => {
+  const { keyboardScrollTarget: target } = load('src/utils/keyboardScroll.ts', {});
+  const bounds = { offset: 0, fieldTop: 400, fieldBottom: 490, viewportTop: 100, viewportBottom: 800, keyboardTop: 450 };
+  assert.equal(target(bounds), 56);
+  assert.equal(target({ ...bounds, viewportBottom: 420, keyboardTop: Infinity }), 86);
+  assert.equal(target({ ...bounds, offset: 180 }), 236);
+  assert.equal(target({ ...bounds, fieldTop: 150, fieldBottom: 240 }), 0);
+  assert.equal(target({ ...bounds, offset: 80, fieldTop: 90, fieldBottom: 180 }), 54);
+});
+
+test('focused phone field is revealed again after keyboard padding and viewport layout settle', () => {
+  const slots = [], effects = [], frames = [], listeners = {}, calls = [];
+  let index = 0, paddingReady = false, viewportBottom = 800;
+  const react = {
+    createContext: () => ({ Provider: 'Provider' }), useContext() {},
+    useRef(value) { const key = index++; return slots[key] ??= { current: value }; },
+    useState(value) { const key = index++; if (!(key in slots)) slots[key] = value; return [slots[key], next => { slots[key] = next; }]; },
+    useCallback(fn, deps) {
+      const key = index++; const old = slots[key];
+      if (!old || deps.some((v, i) => v !== old.deps[i])) slots[key] = { fn, deps };
+      return slots[key].fn;
+    },
+    useEffect(fn, deps) {
+      const key = index++; const old = slots[key];
+      if (!old || deps.some((v, i) => v !== old.deps[i])) effects.push(() => {
+        old?.cleanup?.(); slots[key] = { deps, cleanup: fn() };
+      });
+    },
+  };
+  const jsx = (type, props) => ({ type, props });
+  const { KeyboardAwareForm } = load('src/components/KeyboardAwareForm.tsx', {
+    react, 'react/jsx-runtime': { jsx, jsxs: jsx },
+    'react-native': { Keyboard: { addListener(name, fn) { listeners[name] = fn; return { remove() {} }; } },
+      Platform: { OS: 'android' }, ScrollView: 'ScrollView', KeyboardAvoidingView: 'KeyboardAvoidingView', StyleSheet: { create: x => x } },
+    'react-native-safe-area-context': { useSafeAreaInsets: () => ({ bottom: 0 }) },
+    '../theme/colors': {}, '../utils/keyboardScroll': load('src/utils/keyboardScroll.ts', {}),
+  }, { requestAnimationFrame(fn) { frames.push(fn); return frames.length; }, cancelAnimationFrame() {} });
+  let tree;
+  const scroll = { getNativeScrollRef: () => ({ measureInWindow(fn) { fn(0, 100, 360, viewportBottom - 100); } }),
+    scrollTo({ y }) { calls.push(y); if (paddingReady) tree.props.children.props.onScroll({ nativeEvent: { contentOffset: { y } } }); } };
+  function render() {
+    index = 0; tree = KeyboardAwareForm({ children: null });
+    tree.props.children.props.ref.current = scroll;
+    while (effects.length) effects.shift()();
+  }
+  render();
+  tree.props.value.handleInputFocus('phone', { measureInWindow(fn) { fn(0, 400, 320, 90); } });
+  assert.equal(calls.length, 0, 'field was visible before keyboard opened');
+  listeners.keyboardDidShow({ endCoordinates: { screenY: 450, height: 350 } });
+  assert.equal(calls.at(-1), 56);
+  render(); paddingReady = true;
+  tree.props.children.props.onContentSizeChange();
+  assert.equal(calls.at(-1), 56, 'scroll is retried after previously unavailable padding is laid out');
+  tree.props.value.handleInputBlur('phone');
+  const count = calls.length;
+  tree.props.children.props.onLayout();
+  assert.equal(calls.length, count, 'blurred field is not scrolled');
+  viewportBottom = 420;
+  tree.props.value.handleInputFocus('phone', { measureInWindow(fn) { fn(0, 400, 320, 90); } });
+  assert.equal(calls.at(-1), 142, 'resized viewport also determines the visible bottom');
+});
+
+function pendingHarness(storage = new Map(), account = 'user-1') {
+  let sequence = 0;
+  const mocks = {
+    '@react-native-async-storage/async-storage': { __esModule: true, default: {
+      async getItem(key) { return storage.get(key) ?? null; },
+      async setItem(key, value) { storage.set(key, value); },
+      async removeItem(key) { storage.delete(key); },
+    } },
+    'expo-crypto': { randomUUID: () => `request-${++sequence}` },
+    '../lib/supabase': { supabase: { auth: { async getSession() {
+      return { data: { session: { user: { id: account } } } , error: null };
+    } } } },
+  };
+  return { api: load('src/services/pendingOperation.ts', mocks), storage, mocks };
+}
+
+test('uncertain financial request survives restart and reuses its request ID', async () => {
+  const first = pendingHarness();
+  let originalID;
+  await assert.rejects(first.api.runPendingOperation('acceptance', { amount: 10 }, async id => {
+    originalID = id; throw new Error('response lost');
+  }));
+  const restarted = pendingHarness(first.storage);
+  const result = await restarted.api.runPendingOperation('acceptance', { amount: 10 }, async id => {
+    assert.equal(id, originalID); return 'existing-record';
+  });
+  assert.equal(result, 'existing-record');
+  assert.equal(await restarted.api.readPendingOperation('acceptance'), null);
+});
+
+test('changed input cannot replace an unresolved financial operation', async () => {
+  const { api } = pendingHarness();
+  await assert.rejects(api.runPendingOperation('payment:b1', { amount: 10 }, async () => { throw new Error('offline'); }));
+  let sent = false;
+  await assert.rejects(api.runPendingOperation('payment:b1', { amount: 20 }, async () => { sent = true; }));
+  assert.equal(sent, false);
+  assert.equal((await api.readPendingOperation('payment:b1')).input.amount, 10);
+});
+
+test('database rejection clears a rolled-back operation so corrected data can be submitted', async () => {
+  const { api } = pendingHarness();
+  await assert.rejects(api.runPendingOperation('payment:b1', { amount: 100 }, async () => {
+    throw { code: 'P0001', message: 'Payment exceeds balance' };
+  }), { message: 'Payment exceeds balance' });
+  assert.equal(await api.readPendingOperation('payment:b1'), null);
+  assert.equal(await api.runPendingOperation('payment:b1', { amount: 10 }, async () => 'saved'), 'saved');
+});
+
+test('database connection failures retain the unresolved operation', async () => {
+  const { api } = pendingHarness();
+  await assert.rejects(api.runPendingOperation('payment:b1', { amount: 10 }, async () => {
+    throw { code: '08006', message: 'Connection failed' };
+  }));
+  assert.ok(await api.readPendingOperation('payment:b1'));
+});
+
+test('financial recovery journals are separated by account', async () => {
+  const first = pendingHarness();
+  await assert.rejects(first.api.runPendingOperation('acceptance', { name: 'Private' }, async () => { throw new Error('offline'); }));
+  const other = pendingHarness(first.storage, 'user-2');
+  assert.equal(await other.api.readPendingOperation('acceptance'), null);
+});
+
+test('a financial request is never sent if its recovery journal cannot be persisted', async () => {
+  const h = pendingHarness(); let sent = false;
+  h.mocks['@react-native-async-storage/async-storage'].default.setItem = async () => { throw new Error('disk full'); };
+  await assert.rejects(h.api.runPendingOperation('acceptance', {}, async () => { sent = true; }));
+  assert.equal(sent, false);
+});
+
+test('concurrent financial submissions share a scope lock', async () => {
+  const { api } = pendingHarness(); let complete;
+  const first = api.runPendingOperation('payment:b1', {}, () => new Promise(resolve => { complete = resolve; }));
+  await tick();
+  await assert.rejects(api.runPendingOperation('payment:b1', {}, async () => 'duplicate'));
+  complete('saved');
+  assert.equal(await first, 'saved');
+});
 const session = { user: { id: 'user-1' }, access_token: 'token', refresh_token: 'refresh' };
 
 function appHarness({ stored = session, authorized = true, configured = true } = {}) {
@@ -142,6 +353,7 @@ function serviceHarness(file, exportName) {
     './dataEvents': { emitDataChanged() {} },
     './queryCache': { cacheReads() {} },
     './readAllRows': load('src/services/readAllRows.ts', {}),
+    './pendingOperation': {},
     '../utils/dateRules': {}, './eggTypeService': {}, './smsService': {},
   };
   return { service: load(file, mocks)[exportName], calls };

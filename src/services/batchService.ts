@@ -132,10 +132,8 @@ export const batchService = {
   },
 
   async update(id: string, input: Partial<CreateBatchInput>) {
-    const syncSms = input.customerId !== undefined
-      || input.eggTypeId !== undefined
-      || input.eggCount !== undefined
-      || input.incubationDate !== undefined;
+    const syncSms = input.customerId !== undefined || input.eggTypeId !== undefined
+      || input.eggCount !== undefined || input.incubationDate !== undefined;
 
     if (!isSupabaseConfigured || !supabase) {
       const index = demoBatchStore.findIndex((batch) => batch.id === id);
@@ -153,6 +151,9 @@ export const batchService = {
       demoBatchStore[index] = {
         ...currentBatch,
         ...input,
+        status: (['RECEIVED', 'INCUBATING'].includes(currentBatch.status) || (currentBatch.status === 'TRANSFER_DUE' && incubationDate !== currentBatch.incubationDate))
+          ? (incubationDate ? 'INCUBATING' : 'RECEIVED') : currentBatch.status,
+        breedId: input.breedId !== undefined ? input.breedId : eggTypeId !== currentBatch.eggTypeId ? null : currentBatch.breedId,
         eggTypeId,
         incubationDate,
         transferDate: calculated.transferDate,
@@ -161,7 +162,10 @@ export const batchService = {
         updatedAt: new Date().toISOString(),
       };
       emitDataChanged('batch');
-      if (syncSms) {
+      const changedSms = syncSms && (currentBatch.customerId !== input.customerId && input.customerId !== undefined
+        || currentBatch.eggTypeId !== eggTypeId || currentBatch.eggCount !== demoBatchStore[index].eggCount
+        || currentBatch.incubationDate !== incubationDate);
+      if (changedSms) {
         try {
           await smsService.syncHatchDraftForBatch(demoBatchStore[index]);
         } catch (error) {
@@ -180,13 +184,7 @@ export const batchService = {
     if (error) throw error;
     const batch = mapBatch(data);
     emitDataChanged('batch');
-    if (syncSms) {
-      try {
-        await smsService.syncHatchDraftForBatch(batch);
-      } catch (error) {
-        throw new Error(`Yumurta kabulü güncellendi ancak SMS taslağı eşitlenemedi: ${error instanceof Error ? error.message : 'Bilinmeyen hata.'}`);
-      }
-    }
+    // Dates, state, breed and unsent SMS are synchronized atomically by database triggers.
     return batch;
   },
 };
