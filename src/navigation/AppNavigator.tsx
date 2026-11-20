@@ -10,6 +10,7 @@ import { View } from 'react-native';
 import { AppIcon, type IconName } from '../components/AppIcon';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DashboardScreen } from '../screens/DashboardScreen';
+import { EggTypesScreen } from '../screens/EggTypesScreen';
 import { BatchDetailScreen } from '../screens/BatchDetailScreen';
 import { CustomerDetailScreen } from '../screens/CustomerDetailScreen';
 import { CustomersScreen } from '../screens/CustomersScreen';
@@ -92,6 +93,7 @@ export function AppNavigator() {
         }}
       >
         <Stack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false }} />
+        <Stack.Screen name="EggTypes" component={EggTypesScreen} options={{ title: 'Yumurta türleri' }} />
         <Stack.Screen name="CustomerDetail" component={CustomerDetailScreen} options={{ title: 'Müşteri Detayı' }} />
         <Stack.Screen name="NewCustomer" component={NewCustomerScreen} options={{ title: 'Yeni Müşteri' }} />
         <Stack.Screen name="NewBatch" component={NewBatchScreen} options={{ title: 'Yumurta kabulü', headerTintColor: colors.primary, headerTitleStyle: { fontSize: 18, fontWeight: '800' } }} />

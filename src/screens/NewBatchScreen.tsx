@@ -15,6 +15,7 @@ import { acceptanceService, type AcceptanceInput } from '../services/acceptanceS
 import { readPendingOperation } from '../services/pendingOperation';
 import { customerService } from '../services/customerService';
 import { eggTypeService } from '../services/eggTypeService';
+import { smsService } from '../services/smsService';
 import { colors } from '../theme/colors';
 import type { EggType } from '../types/models';
 import { calculateBatchDates, formatDateTR, isValidDateOnly } from '../utils/dateRules';
@@ -81,7 +82,12 @@ export function NewBatchScreen({ navigation, route }: Props) {
           eggTypeService.list(),
         ]);
         if (!active) return;
-        setEggTypes(eggTypeData);
+        const orderedEggTypes = [...eggTypeData];
+        const chickenIndex = orderedEggTypes.findIndex((eggType) => eggType.name.trim().toLocaleLowerCase('tr-TR') === 'tavuk');
+        if (chickenIndex > 0) {
+          [orderedEggTypes[0], orderedEggTypes[chickenIndex]] = [orderedEggTypes[chickenIndex], orderedEggTypes[0]];
+        }
+        setEggTypes(orderedEggTypes);
         if (preselected) {
           setValue('customerName', `${preselected.firstName} ${preselected.lastName}`);
           setValue('phone', preselected.phone);
@@ -89,7 +95,7 @@ export function NewBatchScreen({ navigation, route }: Props) {
         const pending = await readPendingOperation<AcceptanceInput>('acceptance');
         if (!active) return;
         if (pending) { setPendingAcceptance(pending.input); reset(pending.input); setStep(2); Alert.alert('Bekleyen kabul', 'Önceki işlemin sonucu doğrulanmadı. Bilgiler geri yüklendi; aynı kabulü güvenle yeniden deneyebilirsiniz.'); }
-        else if (eggTypeData[0]) setValue('eggTypeId', eggTypeData[0].id);
+        else if (orderedEggTypes[0]) setValue('eggTypeId', orderedEggTypes[0].id);
         if (!eggTypeData.length) Alert.alert('Yumurta türleri yüklenemedi', 'Aktif yumurta türü bulunamadı. Lütfen Supabase bağlantısını ve yumurta türü kayıtlarını kontrol edin.');
       } catch (error) {
         if (active) {
@@ -141,6 +147,28 @@ export function NewBatchScreen({ navigation, route }: Props) {
     );
   }
 
+  async function sendAcceptanceSms(batchId: string) {
+    if (saveLock.current) return;
+    saveLock.current = true;
+    setSaving(true);
+    let detail = '';
+    let title = 'SMS durumu';
+    try {
+      const sms = await smsService.getByBatchId(batchId);
+      if (!sms) throw new Error('SMS taslağı bulunamadı. Kabul detayından oluşturabilirsiniz.');
+      const result = await smsService.sendNow(sms);
+      title = result.status === 'sent' ? 'SMS gönderim sonucu' : 'SMS durumu';
+      detail = result.detail ?? 'SMS sonucu doğrulanamadı.';
+    } catch (error) {
+      detail = error instanceof Error ? error.message : 'SMS gönderilemedi.';
+    } finally {
+      saveLock.current = false;
+      setSaving(false);
+      navigation.replace('BatchDetail', { batchId });
+      Alert.alert(title, detail);
+    }
+  }
+
   async function onSubmit(form: FormData) {
     if (saveLock.current) return;
     saveLock.current = true;
@@ -161,14 +189,6 @@ export function NewBatchScreen({ navigation, route }: Props) {
         throw new Error('Yumurta türü bulunamadı. Lütfen tekrar seçin.');
       }
 
-      const existing = pendingAcceptance ? null : await customerService.findByPhone(form.phone);
-      if (existing && !existing.isActive) {
-        Alert.alert('Arşivlenmiş müşteri', 'Yeni kabulden önce müşteriyi arşivden çıkarın.', [
-          { text: 'Vazgeç', style: 'cancel' },
-          { text: 'Müşteriyi aç', onPress: () => navigation.navigate('CustomerDetail', { customerId: existing.id }) },
-        ]);
-        return;
-      }
       const batch = await acceptanceService.create(pendingAcceptance ?? form);
       const smsDraftMessage = batch.expectedHatchDate
         ? 'Ödeme ve kabul birlikte kaydedildi. SMS taslağı hazır; henüz gönderilmedi.'
@@ -180,6 +200,7 @@ export function NewBatchScreen({ navigation, route }: Props) {
         [
           { text: 'Kabul Detayı', onPress: () => navigation.replace('BatchDetail', { batchId: batch.id }) },
           { text: 'SMS Merkezi', onPress: () => navigation.popTo('MainTabs', { screen: 'SmsCenter' }) },
+          ...(batch.expectedHatchDate ? [{ text: 'Şimdi SMS gönder', onPress: () => { void sendAcceptanceSms(batch.id); } }] : []),
         ],
         { cancelable: false },
       );

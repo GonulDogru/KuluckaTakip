@@ -43,7 +43,7 @@ export function PartiesScreen() {
       const [batchData, customerData, eggTypeData, paymentData] = await Promise.all([
         batchService.list(),
         customerService.list({ includeArchived: true }),
-        eggTypeService.list(),
+        eggTypeService.listAll(),
         paymentService.list(),
       ]);
       setBatches(batchData);

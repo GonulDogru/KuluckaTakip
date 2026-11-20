@@ -2,6 +2,9 @@ import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { PermissionsAndroid, Platform } from 'react-native';
 import { customerService } from './customerService';
 import { eggTypeService } from './eggTypeService';
+import { batchService } from './batchService';
+import { paymentService } from './paymentService';
+import { formatCurrency } from '../utils/money';
 import type { Batch, Customer, EggType, SmsLog } from '../types/models';
 import { formatDateTR, isValidDateOnly } from '../utils/dateRules';
 import { mapSmsLog } from './mappers';
@@ -21,6 +24,7 @@ type HatchSmsInput = {
   customer: Customer;
   batch: Batch;
   eggType: EggType;
+  paidAmount?: number;
 };
 
 export type HatchSmsDraftResult =
@@ -70,17 +74,39 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-export function buildHatchSmsMessage({ customer, batch, eggType }: HatchSmsInput) {
+export function buildHatchSmsMessage({ customer, batch, eggType, paidAmount = 0 }: HatchSmsInput) {
   const customerName = [customer.firstName, customer.lastName]
     .filter((name) => name && name !== '-')
     .join(' ');
   const eggTypeName = eggType.name.toLocaleLowerCase('tr-TR');
   const expectedHatchDate = formatDateTR(batch.expectedHatchDate);
 
-  return withSmsSignature(`Sayın ${customerName}, ${batch.eggCount} adet ${eggTypeName} yumurtanızın tahmini çıkım tarihi ${expectedHatchDate}'dır.`);
+  return withSmsSignature(`Sayın ${customerName}, ${batch.eggCount} adet ${eggTypeName} yumurtanızın tahmini çıkım tarihi ${expectedHatchDate}'dır. Ödenen ücret: ${formatCurrency(paidAmount)}. Kalan ödeme: ${formatCurrency(Math.max(0, batch.totalPrice - paidAmount))}.`);
 }
 
 export const smsService = {
+  async deleteDraft(sms: SmsLog) {
+    if (!supabase) {
+      const index = demoSmsStore.findIndex((item) => item.id === sms.id && item.status === sms.status && item.message === sms.message && item.phone === sms.phone);
+      if (index < 0 || !['PENDING', 'QUEUED', 'FAILED'].includes(sms.status)) throw new Error('SMS değişti veya silinebilir durumda değil.');
+      demoSmsStore.splice(index, 1);
+      demoCustomMessages.delete(sms.id);
+    } else {
+      const { error } = await supabase.rpc('delete_sms_draft', { p_sms_id: sms.id, p_status: sms.status, p_message: sms.message, p_phone: sms.phone });
+      if (error) throw error;
+    }
+    emitDataChanged('sms');
+  },
+
+  removeDemoByBatch(batchId: string) {
+    for (let i = demoSmsStore.length - 1; i >= 0; i--) {
+      const sms = demoSmsStore[i];
+      if (sms.batchId !== batchId) continue;
+      if (['SENT', 'DELIVERED'].includes(sms.status)) sms.batchId = null;
+      else { demoCustomMessages.delete(sms.id); demoSmsStore.splice(i, 1); }
+    }
+  },
+
   getDeviceSupport(): { status: SmsDeviceSupportStatus; detail: string } {
     if (Platform.OS !== 'android') return { status: 'unsupported', detail: 'SIM üzerinden SMS gönderimi Android telefonda kullanılabilir.' };
     if (!isDirectSimSmsModuleInstalled()) return { status: 'native_unavailable', detail: 'Bu kurulumda SMS bileşeni yüklenemedi. Uygulamayı güncelleyin.' };
@@ -94,6 +120,21 @@ export const smsService = {
 
   async list(): Promise<SmsLog[]> {
     if (!isSupabaseConfigured || !supabase) {
+      for (const sms of demoSmsStore) {
+        if (!sms.batchId || demoCustomMessages.has(sms.id) || !['PENDING', 'QUEUED', 'FAILED'].includes(sms.status)) continue;
+        const batch = await batchService.getById(sms.batchId);
+        if (!batch) continue;
+        const [customer, eggType, payments] = await Promise.all([
+          customerService.getById(batch.customerId), eggTypeService.getById(batch.eggTypeId), paymentService.listByBatch(batch.id),
+        ]);
+        if (!customer || !eggType || !isValidDateOnly(batch.expectedHatchDate)) continue;
+        const message = buildHatchSmsMessage({ customer, batch, eggType, paidAmount: paymentService.calculatePaidTotal(payments) });
+        if (sms.message !== message) {
+          sms.message = message;
+          if (sms.status === 'QUEUED') sms.status = 'PENDING';
+          sms.needsReview = true;
+        }
+      }
       return [...demoSmsStore].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     }
 
@@ -106,6 +147,14 @@ export const smsService = {
   async getById(id: string) {
     if (!supabase) return demoSmsStore.find((sms) => sms.id === id) ?? null;
     const { data, error } = await supabase.from('sms_logs').select(smsLogColumns).eq('id', id).maybeSingle();
+    if (error) throw error;
+    return data ? mapSmsLog(data) : null;
+  },
+
+  async getByBatchId(batchId: string) {
+    if (!supabase) return demoSmsStore.find((sms) => sms.batchId === batchId) ?? null;
+    const { data, error } = await supabase.from('sms_logs').select(smsLogColumns)
+      .eq('batch_id', batchId).order('created_at').order('id').limit(1).maybeSingle();
     if (error) throw error;
     return data ? mapSmsLog(data) : null;
   },
@@ -133,7 +182,8 @@ export const smsService = {
       return { created: false, reason: 'Tahmini çıkım tarihi bulunmuyor. SMS taslağı oluşturulmadı.' };
     }
 
-    const message = buildHatchSmsMessage({ customer, batch, eggType });
+    const payments = await paymentService.listByBatch(batch.id);
+    const message = buildHatchSmsMessage({ customer, batch, eggType, paidAmount: paymentService.calculatePaidTotal(payments) });
 
     if (!isSupabaseConfigured || !supabase) {
       const existing = demoSmsStore.find((sms) => sms.batchId === batch.id);
@@ -207,7 +257,7 @@ export const smsService = {
   },
 
   async addToOutgoingList(id: string) {
-    const sms = (await this.list()).find((item) => item.id === id);
+    const sms = await this.getById(id);
     if (!sms) throw new Error('SMS kaydı bulunamadı.');
     if (sms.status.toUpperCase() === 'SENT' || sms.status.toUpperCase() === 'DELIVERED') {
       throw new Error('Gönderilmiş SMS tekrar gönderilecekler listesine eklenemez.');
@@ -236,6 +286,37 @@ export const smsService = {
     if (!queuedSms) throw new Error('SMS kuyruğa eklendi ancak güncel kayıt alınamadı. Listeyi yenileyin.');
     emitDataChanged('sms');
     return { sms: queuedSms, alreadyQueued: false };
+  },
+
+  async sendNow(confirmedSms: SmsLog): Promise<SmsAttemptResult> {
+    if (!['PENDING', 'QUEUED'].includes(confirmedSms.status.toUpperCase())) {
+      return { status: 'not_claimed', stateSaved: false, detail: 'SMS gönderilebilir durumda değil. Güncel mesajı kontrol edin.' };
+    }
+    if (confirmedSms.status.toUpperCase() === 'PENDING') {
+      const queued = await this.addToOutgoingList(confirmedSms.id);
+      if (queued.sms.phone !== confirmedSms.phone || queued.sms.message !== confirmedSms.message) {
+        return { status: 'not_claimed', stateSaved: false, detail: 'SMS içeriği değişti. Güncel mesajı kontrol edin.' };
+      }
+    }
+    return this.sendQueuedSms(confirmedSms.id, { phone: confirmedSms.phone, message: confirmedSms.message });
+  },
+
+  async retryAndSend(confirmedSms: SmsLog): Promise<SmsAttemptResult> {
+    if (!['UNKNOWN', 'FAILED'].includes(confirmedSms.status.toUpperCase())) {
+      return { status: 'not_claimed', stateSaved: false, detail: 'SMS durumu değişti. Güncel kaydı kontrol edin.' };
+    }
+    const current = await this.getById(confirmedSms.id);
+    if (!current || current.status !== confirmedSms.status || current.phone !== confirmedSms.phone || current.message !== confirmedSms.message) {
+      return { status: 'not_claimed', stateSaved: false, detail: 'SMS değişti. Güncel kaydı kontrol edin.' };
+    }
+    if (!await this.resolveSmsUncertain(confirmedSms.id, 'retry')) {
+      return { status: 'not_claimed', stateSaved: false, detail: 'SMS durumu değişti veya işlem hâlâ sürüyor. Kaydı kontrol edin.' };
+    }
+    const refreshed = await this.getById(confirmedSms.id);
+    if (!refreshed || refreshed.status.toUpperCase() !== 'PENDING' || refreshed.phone !== confirmedSms.phone || refreshed.message !== confirmedSms.message) {
+      return { status: 'not_claimed', stateSaved: false, detail: 'SMS içeriği değişti. Güncel mesajı kontrol edip yeniden gönderin.' };
+    }
+    return this.sendNow(refreshed);
   },
 
   async claimSms(id: string, expectedPhone: string, expectedMessage: string): Promise<SmsClaimResult> {

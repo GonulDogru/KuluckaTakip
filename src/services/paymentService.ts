@@ -14,6 +14,12 @@ type CreatePaymentInput = Omit<Payment, 'id' | 'createdAt'>;
 export type PaymentWriteInput = CreatePaymentInput & { id?: string; expectedUpdatedAt?: string; void?: boolean; reason?: string };
 
 export const paymentService = {
+  removeDemoByBatch(batchId: string) {
+    for (let i = demoPaymentStore.length - 1; i >= 0; i--) {
+      if (demoPaymentStore[i].batchId === batchId) demoPaymentStore.splice(i, 1);
+    }
+  },
+
   async list() {
     if (!isSupabaseConfigured || !supabase) {
       return [...demoPaymentStore];

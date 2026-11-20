@@ -2,16 +2,16 @@
 
 Kuluçka işletmeleri için geliştirilen Android uygulaması. Müşteri kayıtlarını, yumurta kabullerini, ödemeleri ve SMS bildirimlerini tek yerden takip etmeyi sağlar.
 
-**Sürüm:** 1.1.4 · **Platform:** Android 7+ · **Teknolojiler:** Expo SDK 57, React Native, TypeScript, Supabase
+**Sürüm:** 1.1.7 · **Platform:** Android 7+ · **Teknolojiler:** Expo SDK 57, React Native, TypeScript, Supabase
 
 ## Özellikler
 
 - **Ana sayfa:** İşletmenin güncel durumunu özetleyen göstergeler.
 - **Müşteri takibi:** Müşteri oluşturma, iletişim bilgileri, kabul geçmişi ve ödeme kayıtları.
-- **Yumurta kabulü:** Müşteri, yumurta türü, ırk ve adet bilgileriyle kayıt oluşturma; kuluçka sürecini ve çıkım tarihlerini takip etme.
+- **Yumurta kabulü:** Kabul oluşturma, düzenleme ve onayla silme; kuluçka sürecini ve çıkım tarihlerini takip etme. Yumurta türleri yönetilebilir.
 - **Arama ve filtreleme:** Müşteri, telefon, kabul numarası ve yumurta türüyle arama; müşteri, durum, tür ve borç filtrelerini birlikte kullanma.
 - **Ödeme takibi:** Kabul kayıtlarına ödeme ekleme ve kalan borcu görüntüleme.
-- **SMS merkezi:** Mesajları durumlarına göre inceleme, önizleme ve kullanıcı onayıyla Android telefonun SIM hattından gönderme.
+- **SMS merkezi:** Ödeme bilgili taslakları inceleme, düzenleme, silme ve Android telefonun SIM hattından doğrudan gönderme. Sonucu belirsiz mesajların tekrar gönderimi onay gerektirir.
 - **Ortak işletme kayıtları:** Yetkili kullanıcıların aynı Supabase verilerine farklı telefonlardan erişmesi.
 
 ## Ekran görüntüleri
@@ -39,6 +39,12 @@ Kuluçka işletmeleri için geliştirilen Android uygulaması. Müşteri kayıtl
   </tr>
 </table>
 
+## 1.1.7 ile gelenler
+
+Uygulama simgesi ana sayfadaki tavuk ve civciv görseliyle güncellendi. SMS taslaklarına ödenen ve kalan tutar eklendi; önizlemeden doğrudan gönderim ve taslak silme sağlandı. Kabul silme, kabul tarihi ve fiyat düzenleme, yumurta türü yönetimi ve liste yükleme iyileştirmeleri eklendi. Tavuk yeni kabullerde varsayılan türdür.
+
+Bu değişiklikler için `20261120120000` ile `20261120170000` arasındaki migration dosyaları sırayla uygulanmalıdır. APK dosyaları `output/releases` altında yerel olarak üretilir ve Git deposuna eklenmez.
+
 ## 1.1.4 ile gelenler
 
 Redmi/MIUI telefonlarda SMS desteğinin yanlışlıkla “modül eksik” olarak algılanması düzeltildi. SMS Merkezi cihaz desteğini ayrıca gösterir. Ayrıntılar: [1.1.4 sürüm notları](docs/UPDATE_1.1.4.md).
@@ -53,14 +59,14 @@ Yumurta kayıtlarında birleşik filtreler, Türkçe karakterleri destekleyen ar
 
 ## Yeni telefona kurulum
 
-1. `output/releases/KuluckaTakip-1.1.4.apk` dosyasını Android telefona aktarın ve açın.
+1. `output/releases/KuluckaTakip-1.1.7.apk` dosyasını Android telefona aktarın ve açın.
 2. Telefon isterse dosyayı açan uygulamaya bu kaynaktan kurulum izni verin.
 3. İnternet bağlantısıyla yetkili hesabınızla giriş yapın. Diğer telefonlarla aynı işletme kayıtları Supabase üzerinden kullanılır.
 4. SMS izni yalnız gerçekten mesaj göndermek istediğinizde istenir. SIM ve varsayılan SMS hattı gerekir; kayıtları görüntülemek için SMS izni gerekmez.
 
 Uygulama bilgisayar, Metro veya Expo Go bağlantısı olmadan çalışır. Sunucu kayıtları için internet gerekir; çevrimdışı kayıt ve senkronizasyon kuyruğu yoktur. Paket Android 7 ve üzeri ARM 32/64 bit telefonlar içindir; iPhone kurulum paketi değildir.
 
-Daha önce geliştirme sürümü yüklenmiş telefonlarda `KuluckaTakip-1.1.4-mevcut-telefon-guncelleme.apk` dosyası kullanılır. Bu paket mevcut imzayı korur. Yeni dağıtım anahtarıyla imzalanan standart APK eski geliştirme imzasının üzerine kurulamaz; mevcut uygulamayı ve verilerini silmeyin. Sonraki güncellemelerde her telefon için aynı imza serisi kullanılmalıdır.
+Daha önce geliştirme sürümü yüklenmiş telefonlarda `KuluckaTakip-1.1.7-mevcut-telefon-guncelleme.apk` dosyası kullanılır. Bu paket mevcut imzayı korur. Yeni dağıtım anahtarıyla imzalanan standart APK eski geliştirme imzasının üzerine kurulamaz; mevcut uygulamayı ve verilerini silmeyin. Sonraki güncellemelerde her telefon için aynı imza serisi kullanılmalıdır.
 
 ## Hesap ve sunucu
 

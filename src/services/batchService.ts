@@ -8,6 +8,10 @@ import { eggTypeService } from './eggTypeService';
 import { mapBatch } from './mappers';
 import { emitDataChanged } from './dataEvents';
 import { smsService } from './smsService';
+import { paymentService } from './paymentService';
+import { placementService } from './placementService';
+import { trayService } from './trayService';
+import { hatchBasketService } from './hatchBasketService';
 
 const demoBatchStore: Batch[] = [...demoBatches];
 
@@ -44,6 +48,28 @@ function toBatchRow(input: Partial<CreateBatchInput>) {
 }
 
 export const batchService = {
+  async delete(batch: Batch, payments: { id: string; updatedAt?: string; amount: number; voidedAt?: string | null }[]) {
+    if (!supabase) {
+      const index = demoBatchStore.findIndex((item) => item.id === batch.id);
+      if (index < 0) throw new Error('Kabul bulunamadı.');
+      const currentPayments = await paymentService.listByBatch(batch.id);
+      if (JSON.stringify(currentPayments.map((p) => [p.id, p.updatedAt, p.amount, p.voidedAt]).sort()) !== JSON.stringify(payments.map((p) => [p.id, p.updatedAt, p.amount, p.voidedAt]).sort())) throw new Error('Ödemeler değişti. Sayfayı yenileyip tekrar deneyin.');
+      demoBatchStore.splice(index, 1);
+      paymentService.removeDemoByBatch(batch.id);
+      smsService.removeDemoByBatch(batch.id);
+      placementService.removeDemoByBatch(batch.id);
+      trayService.removeDemoByBatch(batch.id);
+      hatchBasketService.removeDemoByBatch(batch.id);
+    } else {
+      const { error } = await supabase.rpc('delete_batch', {
+        p_batch_id: batch.id, p_expected_updated_at: batch.updatedAt,
+        p_expected_payments: payments.map((p) => ({ id: p.id, updated_at: p.updatedAt ?? null, amount: p.amount, voided_at: p.voidedAt ?? null })),
+      });
+      if (error) throw error;
+    }
+    for (const event of ['batch', 'payment', 'sms', 'placement', 'hatchBasket'] as const) emitDataChanged(event);
+  },
+
   async list() {
     if (!isSupabaseConfigured || !supabase) {
       return [...demoBatchStore];
@@ -131,7 +157,7 @@ export const batchService = {
     return batch;
   },
 
-  async update(id: string, input: Partial<CreateBatchInput>) {
+  async update(id: string, input: Partial<CreateBatchInput>, expectedUpdatedAt?: string) {
     const syncSms = input.customerId !== undefined || input.eggTypeId !== undefined
       || input.eggCount !== undefined || input.incubationDate !== undefined;
 
@@ -139,6 +165,7 @@ export const batchService = {
       const index = demoBatchStore.findIndex((batch) => batch.id === id);
       if (index < 0) return null;
       const currentBatch = demoBatchStore[index];
+      if (expectedUpdatedAt && currentBatch.updatedAt !== expectedUpdatedAt) throw new Error('Kabul başka bir cihazda değiştirildi. Yenileyip tekrar deneyin.');
       const eggTypeId = input.eggTypeId ?? currentBatch.eggTypeId;
       const incubationDate = input.incubationDate !== undefined ? input.incubationDate : currentBatch.incubationDate;
       const eggType = await eggTypeService.getById(eggTypeId);
@@ -175,13 +202,11 @@ export const batchService = {
       return demoBatchStore[index];
     }
 
-    const { data, error } = await supabase
-      .from('batches')
-      .update(toBatchRow(input))
-      .eq('id', id)
-      .select('*')
-      .single();
+    let query = supabase.from('batches').update(toBatchRow(input)).eq('id', id);
+    if (expectedUpdatedAt) query = query.eq('updated_at', expectedUpdatedAt);
+    const { data, error } = await query.select('*').maybeSingle();
     if (error) throw error;
+    if (!data) throw new Error('Kabul bulunamad\u0131 veya ba\u015fka bir cihazda de\u011fi\u015ftirildi. Yenileyip tekrar deneyin.');
     const batch = mapBatch(data);
     emitDataChanged('batch');
     // Dates, state, breed and unsent SMS are synchronized atomically by database triggers.

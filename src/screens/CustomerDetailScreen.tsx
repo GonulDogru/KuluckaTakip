@@ -43,11 +43,14 @@ export function CustomerDetailScreen({ navigation, route }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [eggTypeError, setEggTypeError] = useState<string | null>(null);
   const [archiving, setArchiving] = useState(false);
+  const [deletingBatchId, setDeletingBatchId] = useState<string | null>(null);
+  const deleteLock = useRef(false);
 
   const loadVersion = useRef(0);
+  const loaded = useRef(false);
   const load = useCallback(async () => {
     const version = ++loadVersion.current;
-    setLoading(true);
+    if (!loaded.current) setLoading(true);
     setError(null);
     setEggTypeError(null);
     try {
@@ -56,11 +59,12 @@ export function CustomerDetailScreen({ navigation, route }: Props) {
         batchService.listByCustomer(route.params.customerId), paymentService.listByCustomer(route.params.customerId),
       ]);
       if (version !== loadVersion.current) return;
+      loaded.current = true;
       setCustomer(customerData);
       setBatches(batchData);
       setPayments(paymentData);
       try {
-        const eggTypeData = await eggTypeService.list();
+        const eggTypeData = await eggTypeService.listAll();
         if (version === loadVersion.current) setEggTypes(eggTypeData);
       } catch (error) {
         if (version === loadVersion.current) setEggTypeError(error instanceof Error ? error.message : 'Yumurta türü bilgileri yüklenemedi.');
@@ -94,6 +98,29 @@ export function CustomerDetailScreen({ navigation, route }: Props) {
       Alert.alert('Arşivleme başarısız', archiveError instanceof Error ? archiveError.message : 'Müşteri arşivlenemedi.');
     } finally {
       setArchiving(false);
+    }
+  }
+
+  function confirmDeleteBatch(batch: Batch, batchPayments: Payment[]) {
+    const paidAmount = paymentService.calculatePaidTotal(batchPayments);
+    Alert.alert('Yumurta kabulünü sil?',
+      `${batch.eggCount} yumurtalık kabul silinecek. Bağlı ödemeler (${formatCurrency(paidAmount)}), yerleştirmeler ve gönderilmemiş SMS taslakları listelerden kaldırılacak. Bu işlem para iadesi yapmaz.`,
+      [{ text: 'Vazgeç', style: 'cancel' }, { text: 'Kabulü sil', style: 'destructive', onPress: () => { void deleteBatch(batch, batchPayments); } }]);
+  }
+
+  async function deleteBatch(batch: Batch, batchPayments: Payment[]) {
+    if (deleteLock.current) return;
+    deleteLock.current = true;
+    setDeletingBatchId(batch.id);
+    try {
+      await batchService.delete(batch, batchPayments);
+      await load();
+    } catch (deleteError) {
+      Alert.alert('Kabul silinemedi', deleteError instanceof Error ? deleteError.message : 'Kabul silinemedi.');
+      await load();
+    } finally {
+      deleteLock.current = false;
+      setDeletingBatchId(null);
     }
   }
 
@@ -163,7 +190,8 @@ export function CustomerDetailScreen({ navigation, route }: Props) {
           const batchPayments = payments.filter((payment) => payment.batchId === item.id);
           const batchPaid = paymentService.calculatePaidTotal(batchPayments);
           return (
-            <Pressable onPress={() => navigation.navigate('BatchDetail', { batchId: item.id })} style={({ pressed }) => [styles.batchCard, pressed && styles.batchPressed]}>
+            <View style={styles.batchCard}>
+            <Pressable onPress={() => navigation.navigate('BatchDetail', { batchId: item.id })} style={({ pressed }) => pressed && styles.batchPressed}>
               <Text style={styles.batchTitle}>{eggEmoji(eggType?.name)} {item.eggCount} {eggType ? `${eggType.name} yumurtası` : 'yumurta'}</Text>
               <View style={styles.batchDetails}>
                 <Text style={styles.batchLabel}>Kuluçka</Text>
@@ -179,6 +207,10 @@ export function CustomerDetailScreen({ navigation, route }: Props) {
               </View>
               <Text style={styles.openHint}>Detay ve ödeme geçmişini aç</Text>
             </Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel={`${item.eggCount} yumurtalık kabulü sil`} disabled={deletingBatchId !== null} onPress={() => confirmDeleteBatch(item, batchPayments)} style={[styles.deleteButton, deletingBatchId !== null && styles.archiveDisabled]}>
+              <Text style={styles.archiveText}>{deletingBatchId === item.id ? 'Siliniyor...' : 'Kabulü sil'}</Text>
+            </Pressable>
+            </View>
           );
         }}
       />
@@ -206,6 +238,7 @@ const styles = StyleSheet.create({
   paymentAmount: { color: colors.success, fontWeight: '900' },
   batchCard: { backgroundColor: colors.surface, borderRadius: 18, borderWidth: 1, borderColor: colors.border, padding: 16, marginBottom: 12 },
   batchPressed: { opacity: 0.82 },
+  deleteButton: { minHeight: 44, marginTop: 12, borderWidth: 1, borderColor: colors.danger, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   batchTitle: { color: colors.text, fontSize: 17, fontWeight: '900' },
   batchDetails: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 12 },
   batchLabel: { width: '50%', color: colors.textMuted, paddingVertical: 5, fontSize: 13, fontWeight: '700' },

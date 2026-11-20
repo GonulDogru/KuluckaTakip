@@ -12,17 +12,26 @@ export function useFocusedRefresh(refresh: () => void, events: readonly DataEven
   useFocusEffect(useCallback(() => {
     const relevantEvents = eventKey.split(',');
     let previousState = AppState.currentState;
+    let active = true;
+    let scheduled = false;
     refreshRef.current();
     const unsubscribe = subscribeDataChanged((event) => {
-      if (relevantEvents.includes(event)) refreshRef.current();
+      if (!relevantEvents.includes(event) || scheduled) return;
+      scheduled = true;
+      void Promise.resolve().then(() => {
+        if (!active || !scheduled) return;
+        scheduled = false;
+        refreshRef.current();
+      });
     });
     const listener = AppState.addEventListener('change', (state) => {
       if (state === 'active' && previousState !== 'active') {
+        scheduled = false;
         clearQueryCache();
         refreshRef.current();
       }
       previousState = state;
     });
-    return () => { unsubscribe(); listener.remove(); };
+    return () => { active = false; unsubscribe(); listener.remove(); };
   }, [eventKey]));
 }

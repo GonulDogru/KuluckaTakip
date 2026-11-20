@@ -18,6 +18,12 @@ function mapPlacement(row: Record<string, any>): HatchBasketPlacement {
 }
 
 export const hatchBasketService = {
+  removeDemoByBatch(batchId: string) {
+    for (let i = placementStore.length - 1; i >= 0; i--) {
+      if (placementStore[i].batchId === batchId) placementStore.splice(i, 1);
+    }
+  },
+
   async list() {
     if (!isSupabaseConfigured || !supabase) return [...basketStore];
     const { data, error } = await supabase.from('hatch_baskets').select('*').order('basket_number');

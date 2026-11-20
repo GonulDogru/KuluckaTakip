@@ -1,4 +1,4 @@
-import { clearQueryCache } from './queryCache';
+import { invalidateQueryCache } from './queryCache';
 
 export type DataEvent =
   | 'eggType'
@@ -16,7 +16,14 @@ type Listener = (event: DataEvent) => void;
 const listeners = new Set<Listener>();
 
 export function emitDataChanged(event: DataEvent) {
-  clearQueryCache();
+  const prefixes: Record<DataEvent, string[]> = {
+    customer: ['customer:', 'dashboard:'],
+    batch: ['batch:', 'customer:listWithSummary:', 'dashboard:'],
+    payment: ['payment:', 'customer:listWithSummary:', 'dashboard:'],
+    eggType: ['eggType:'],
+    sms: [], machine: ['machine:'], rack: ['rack:'], placement: ['placement:'], hatchBasket: ['hatchBasket:'],
+  };
+  invalidateQueryCache(prefixes[event]);
   listeners.forEach((listener) => listener(event));
 }
 

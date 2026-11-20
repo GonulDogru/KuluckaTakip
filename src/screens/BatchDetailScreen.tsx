@@ -47,6 +47,8 @@ export function BatchDetailScreen({ navigation, route }: Props) {
   const [editEggTypeId, setEditEggTypeId] = useState('');
   const [editEggCount, setEditEggCount] = useState('');
   const [editIncubationDate, setEditIncubationDate] = useState('');
+  const [editReceivedDate, setEditReceivedDate] = useState('');
+  const [editUnitPrice, setEditUnitPrice] = useState('');
   const [editNote, setEditNote] = useState('');
   const paymentLock = useRef(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -59,7 +61,7 @@ export function BatchDetailScreen({ navigation, route }: Props) {
     if (!batchData) throw new Error('Yumurta kaydı bulunamadı.');
     const [customerData, eggTypeOptions, paymentData] = await Promise.all([
       customerService.getById(batchData.customerId),
-      eggTypeService.list(),
+      eggTypeService.listAll(),
       paymentService.listByBatch(batchData.id),
     ]);
     setCustomer(customerData);
@@ -71,7 +73,7 @@ export function BatchDetailScreen({ navigation, route }: Props) {
     setPendingPayment(pending?.input ?? null);
   }, [route.params.batchId]);
 
-  useFocusedRefresh(() => { clearQueryCache(); void load().catch((error: unknown) => setLoadError(error instanceof Error ? error.message : 'Veriler alınamadı.')); }, ['batch', 'customer', 'payment', 'eggType']);
+  useFocusedRefresh(() => { void load().catch((error: unknown) => setLoadError(error instanceof Error ? error.message : 'Veriler alınamadı.')); }, ['batch', 'customer', 'payment', 'eggType']);
 
   if (loadError) return <Screen><View style={{ padding: 24, gap: 16 }}><Text style={styles.state}>{loadError}</Text><PrimaryButton title="Tekrar dene" onPress={() => { clearQueryCache(); void load().catch((error: unknown) => setLoadError(error instanceof Error ? error.message : 'Veriler alınamadı.')); }} /></View></Screen>;
 
@@ -151,6 +153,8 @@ export function BatchDetailScreen({ navigation, route }: Props) {
   function openEditForm() {
     setEditEggTypeId(currentBatch.eggTypeId);
     setEditEggCount(String(currentBatch.eggCount));
+    setEditReceivedDate(currentBatch.receivedDate);
+    setEditUnitPrice(String(currentBatch.unitPrice));
     setEditIncubationDate(currentBatch.incubationDate ?? '');
     setEditBreed(breed?.name ?? '');
     setEditNote(currentBatch.note ?? '');
@@ -173,7 +177,11 @@ export function BatchDetailScreen({ navigation, route }: Props) {
       return;
     }
 
-    if (editIncubationDate && editIncubationDate < currentBatch.receivedDate) { Alert.alert('Geçersiz tarih', 'Kuluçka tarihi kabul tarihinden önce olamaz.'); return; }
+    const unitPrice = parseMoneyInput(editUnitPrice);
+    if (unitPrice === null || unitPrice < 0) { Alert.alert('Geçersiz fiyat', 'Sıfır veya daha büyük geçerli bir birim fiyat girin.'); return; }
+    if (!isValidDateOnly(editReceivedDate)) { Alert.alert('Geçersiz tarih', 'Geçerli bir kabul tarihi seçin.'); return; }
+    if (pendingPayment) { Alert.alert('Bekleyen ödeme', 'Önce sonucu belirsiz ödeme işlemini tamamlayın.'); return; }
+    if (editIncubationDate && editIncubationDate < editReceivedDate) { Alert.alert('Geçersiz tarih', 'Kuluçka tarihi kabul tarihinden önce olamaz.'); return; }
 
     saveEditLock.current = true;
     setSavingEdit(true);
@@ -182,9 +190,11 @@ export function BatchDetailScreen({ navigation, route }: Props) {
         eggTypeId: editEggTypeId,
         breedId: editBreed.trim() ? await eggTypeService.ensureBreed(editEggTypeId, editBreed) : null,
         eggCount,
+        receivedDate: editReceivedDate,
+        unitPrice,
         incubationDate: editIncubationDate || null,
         note: editNote.trim() || null,
-      });
+      }, currentBatch.updatedAt);
       if (!updatedBatch) throw new Error('Düzenlenecek yumurta kaydı bulunamadı.');
       setBatch(updatedBatch);
       setEditModal(false);
@@ -260,7 +270,7 @@ export function BatchDetailScreen({ navigation, route }: Props) {
                 <Text style={styles.label}>Yumurta türü</Text>
                 {eggTypes.length === 0 ? <Text style={styles.label}>Aktif yumurta türü bulunamadı.</Text> : null}
                 <View style={styles.eggTypeOptions}>
-                  {eggTypes.map((item) => (
+                  {eggTypes.filter((item) => item.active || item.id === currentBatch.eggTypeId).map((item) => (
                     <Pressable
                       key={item.id}
                       accessibilityRole="button"
@@ -273,6 +283,8 @@ export function BatchDetailScreen({ navigation, route }: Props) {
                   ))}
                 </View>
                 <TextField label="Yumurta adedi" value={editEggCount} onChangeText={setEditEggCount} keyboardType="number-pad" />
+                <TextField label="Birim fiyat (TL)" value={editUnitPrice} onChangeText={setEditUnitPrice} keyboardType="decimal-pad" />
+                <DateField label="Kabul tarihi" value={editReceivedDate} onChange={setEditReceivedDate} />
                 <DateField label="Kuluçkaya Giriş Tarihi" value={editIncubationDate} onChange={setEditIncubationDate} />
                 {editIncubationDate ? <PrimaryButton title="Kuluçka tarihini kaldır" variant="secondary" onPress={() => setEditIncubationDate('')} disabled={savingEdit} /> : null}
                 <Text style={styles.label}>Tahmini Çıkım Tarihi</Text>

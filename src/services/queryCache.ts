@@ -5,6 +5,12 @@ export function clearQueryCache() {
   entries.clear();
 }
 
+export function invalidateQueryCache(prefixes: readonly string[]) {
+  for (const key of entries.keys()) {
+    if (prefixes.some((prefix) => key.startsWith(prefix))) entries.delete(key);
+  }
+}
+
 export function cachedRead<T>(key: string, read: () => Promise<T>, ttl = 30_000): Promise<T> {
   const existing = entries.get(key);
   if (existing?.pending) return existing.pending as Promise<T>;

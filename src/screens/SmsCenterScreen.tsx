@@ -33,6 +33,8 @@ export function SmsCenterScreen() {
   const [error, setError] = useState<string | null>(null);
   const [sendingSmsId, setSendingSmsId] = useState<string | null>(null);
   const sendingSmsRef = useRef(false);
+  const deletingSmsRef = useRef(false);
+  const [deletingSmsId, setDeletingSmsId] = useState<string | null>(null);
 
   const loadVersion = useRef(0);
   const load = useCallback(async () => {
@@ -41,7 +43,7 @@ export function SmsCenterScreen() {
     setError(null);
     try {
       const [logs, customerData, batchData, eggTypeData] = await Promise.all([
-        smsService.list(), customerService.list({ includeArchived: true }), batchService.list(), eggTypeService.list(),
+        smsService.list(), customerService.list({ includeArchived: true }), batchService.list(), eggTypeService.listAll(),
       ]);
       if (version !== loadVersion.current) return;
       loaded.current = true;
@@ -86,7 +88,7 @@ export function SmsCenterScreen() {
   }
 
   async function sendSms(confirmedSms: SmsLog) {
-    if (sendingSmsRef.current) return;
+    if (sendingSmsRef.current || deletingSmsRef.current) return;
     sendingSmsRef.current = true;
     setSendingSmsId(confirmedSms.id);
     try {
@@ -108,6 +110,47 @@ export function SmsCenterScreen() {
     } finally {
       sendingSmsRef.current = false;
       setSendingSmsId(null);
+    }
+  }
+
+  async function sendDraftNow(sms: SmsLog) {
+    if (sendingSmsRef.current || deletingSmsRef.current) return;
+    sendingSmsRef.current = true;
+    setSendingSmsId(sms.id);
+    try {
+      const result = await smsService.sendNow(sms);
+      Alert.alert(result.status === 'sent' ? 'Gönderim sonucu' : 'SMS durumu', result.detail ?? 'SMS sonucu doğrulanamadı.');
+      try { setSmsLogs(await smsService.list()); } catch { /* Result already reported; refresh remains available. */ }
+    } catch (error) {
+      Alert.alert('Gönderilemedi', error instanceof Error ? error.message : 'SMS gönderim işlemi tamamlanamadı.');
+      try { setSmsLogs(await smsService.list()); } catch { /* Refresh remains available. */ }
+    } finally { sendingSmsRef.current = false; setSendingSmsId(null); }
+  }
+
+  function confirmDeleteSms(sms: SmsLog) {
+    if (deletingSmsRef.current || sendingSmsRef.current) return;
+    const detail = sms.status.toUpperCase() === 'FAILED'
+      ? 'Başarısız gönderim kaydı silinecek. Mesajın bir bölümü daha önce gönderilmiş olabilir.'
+      : 'Bu SMS taslağı silinecek. Gerekirse kabul detayından yeniden oluşturabilirsiniz.';
+    Alert.alert('SMS kaydı silinsin mi?', detail, [
+      { text: 'Vazgeç', style: 'cancel' },
+      { text: 'Sil', style: 'destructive', onPress: () => { void deleteSms(sms); } },
+    ]);
+  }
+
+  async function deleteSms(sms: SmsLog) {
+    if (deletingSmsRef.current || sendingSmsRef.current) return;
+    deletingSmsRef.current = true;
+    setDeletingSmsId(sms.id);
+    try {
+      await smsService.deleteDraft(sms);
+      await load();
+    } catch (deleteError) {
+      Alert.alert('SMS silinemedi', deleteError instanceof Error ? deleteError.message : 'SMS kaydı silinemedi.');
+      await load();
+    } finally {
+      deletingSmsRef.current = false;
+      setDeletingSmsId(null);
     }
   }
 
@@ -142,12 +185,18 @@ export function SmsCenterScreen() {
             <Text style={styles.openHint}>Önizleme ve düzenleme</Text>
           </View>
         </Pressable>
+        {sms.status.toUpperCase() === 'PENDING' ? <View style={styles.sendButton}><PrimaryButton title={sendingSmsId === sms.id ? 'SMS gönderiliyor...' : 'Şimdi SMS gönder'} disabled={sendingSmsId !== null || deletingSmsId !== null} onPress={() => { void sendDraftNow(sms); }} /></View> : null}
+        {['PENDING', 'QUEUED', 'FAILED'].includes(sms.status.toUpperCase()) ? (
+          <Pressable accessibilityRole="button" accessibilityLabel={`${customerName} SMS kaydını sil`} disabled={deletingSmsId !== null || sendingSmsId !== null} onPress={() => confirmDeleteSms(sms)} style={({ pressed }) => [styles.deleteButton, pressed && styles.pressed, (deletingSmsId !== null || sendingSmsId !== null) && styles.deleteDisabled]}>
+            <Text style={styles.deleteText}>{deletingSmsId === sms.id ? 'Siliniyor...' : 'SMS kaydını sil'}</Text>
+          </Pressable>
+        ) : null}
         {canSend ? (
           <View style={styles.sendButton}>
             <PrimaryButton
               title={sendingSmsId === sms.id ? 'SIM gönderimi sürüyor...' : 'Bu telefondan SIM ile gönder'}
               onPress={() => confirmSend(sms)}
-              disabled={sendingSmsId !== null}
+              disabled={sendingSmsId !== null || deletingSmsId !== null}
             />
           </View>
         ) : null}
@@ -229,6 +278,9 @@ const styles = StyleSheet.create({
   emptyTitle: { color: colors.text, fontSize: 15, fontWeight: '700' },
   emptyHint: { color: colors.textMuted, fontSize: 12, marginTop: 7, textAlign: 'center' },
   sendButton: { marginTop: 14 },
+  deleteButton: { minHeight: 44, marginTop: 12, borderWidth: 1, borderColor: colors.danger, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  deleteText: { color: colors.danger, fontWeight: '800', fontSize: 13 },
+  deleteDisabled: { opacity: 0.5 },
   signOutButton: { minHeight: 48, justifyContent: 'center', alignItems: 'center', marginTop: 18 },
   signOutText: { color: colors.textMuted, fontSize: 12, fontWeight: '600' },
 });

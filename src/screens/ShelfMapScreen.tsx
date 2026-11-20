@@ -40,7 +40,7 @@ export function ShelfMapScreen({ navigation, route }: Props) {
     const machineData = await machineService.getById(route.params.machineId);
     const racks = await rackService.list(route.params.machineId);
     const rackData = route.params.rackId ? await rackService.getById(route.params.rackId) : racks[0] ?? null;
-    const [batchData, customerData, eggTypeData, allocationData] = await Promise.all([batchService.list(), customerService.list({ includeArchived: true }), eggTypeService.list(), trayService.listAllocations()]);
+    const [batchData, customerData, eggTypeData, allocationData] = await Promise.all([batchService.list(), customerService.list({ includeArchived: true }), eggTypeService.listAll(), trayService.listAllocations()]);
     setMachine(machineData);
     setRack(rackData);
     setBatches(batchData);

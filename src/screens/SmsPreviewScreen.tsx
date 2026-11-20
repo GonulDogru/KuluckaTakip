@@ -26,6 +26,10 @@ export function SmsPreviewScreen({ navigation, route }: Props) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [addingToQueue, setAddingToQueue] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const deleteLock = useRef(false);
+  const sendLock = useRef(false);
+  const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,7 +43,7 @@ export function SmsPreviewScreen({ navigation, route }: Props) {
       if (!smsLog) throw new Error('SMS kaydı bulunamadı.');
       const [customerData, batchData, eggTypes] = await Promise.all([
         smsLog.customerId ? customerService.getById(smsLog.customerId) : Promise.resolve(null),
-        smsLog.batchId ? batchService.getById(smsLog.batchId) : Promise.resolve(null), eggTypeService.list(),
+        smsLog.batchId ? batchService.getById(smsLog.batchId) : Promise.resolve(null), eggTypeService.listAll(),
       ]);
       if (version !== loadVersion.current) return;
       setSms(smsLog);
@@ -87,6 +91,53 @@ export function SmsPreviewScreen({ navigation, route }: Props) {
     } finally {
       setAddingToQueue(false);
     }
+  }
+
+  function requestSend() {
+    if (!sms || sendLock.current) return;
+    if (['UNKNOWN', 'FAILED'].includes(sms.status.toUpperCase())) {
+      Alert.alert('SMS yeniden gönderilsin mi?', 'Daha önceki mesajın tamamı veya bir bölümü ulaşmış olabilir. Tekrar göndermek müşteriye aynı SMS’in iki kez ulaşmasına neden olabilir.', [
+        { text: 'Vazgeç', style: 'cancel' },
+        { text: 'Yine de gönder', style: 'destructive', onPress: () => { void sendNow(true); } },
+      ]);
+    } else { void sendNow(false); }
+  }
+
+  async function sendNow(retry: boolean) {
+    if (!sms || sendLock.current) return;
+    sendLock.current = true;
+    setSending(true);
+    try {
+      const result = retry ? await smsService.retryAndSend(sms) : await smsService.sendNow(sms);
+      const refreshed = await smsService.getById(sms.id).catch(() => null);
+      if (refreshed) setSms(refreshed);
+      Alert.alert(result.status === 'sent' ? 'Gönderim sonucu' : 'SMS durumu', result.detail ?? 'SMS sonucu doğrulanamadı.');
+    } catch (sendError) {
+      Alert.alert('SMS gönderilemedi', sendError instanceof Error ? sendError.message : 'Tekrar deneyin.');
+      const refreshed = await smsService.getById(sms.id).catch(() => null);
+      if (refreshed) setSms(refreshed);
+    } finally { sendLock.current = false; setSending(false); }
+  }
+
+  function confirmDeleteDraft() {
+    if (!sms || deleteLock.current) return;
+    Alert.alert('SMS kaydı silinsin mi?', sms.status.toUpperCase() === 'FAILED' ? 'Başarısız gönderim kaydı silinecek. Mesajın bir bölümü daha önce gönderilmiş olabilir.' : 'Taslak ve gönderim listesi kaydı kaldırılır. Gerekirse kabul detayından yeniden oluşturabilirsiniz.', [
+      { text: 'Vazgeç', style: 'cancel' },
+      { text: 'Taslağı sil', style: 'destructive', onPress: () => { void deleteDraft(); } },
+    ]);
+  }
+
+  async function deleteDraft() {
+    if (!sms || deleteLock.current) return;
+    deleteLock.current = true;
+    setDeleting(true);
+    try {
+      await smsService.deleteDraft(sms);
+      navigation.goBack();
+    } catch (deleteError) {
+      Alert.alert('Taslak silinemedi', deleteError instanceof Error ? deleteError.message : 'Tekrar deneyin.');
+      void load();
+    } finally { deleteLock.current = false; setDeleting(false); }
   }
 
   async function resolveOutcome(resolution: 'sent' | 'retry') {
@@ -147,6 +198,9 @@ export function SmsPreviewScreen({ navigation, route }: Props) {
     <Screen>
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.title}>SMS Önizleme</Text>
+        {!editing && ['PENDING', 'QUEUED', 'FAILED', 'UNKNOWN'].includes(status) ? (
+          <PrimaryButton title={sending ? 'SMS gönderiliyor...' : 'Şimdi SMS gönder'} disabled={sending || addingToQueue || deleting || saving} onPress={requestSend} />
+        ) : null}
         {sms.needsReview ? <Text style={styles.error}>Kabul veya müşteri bilgileri değişti. Alıcıyı ve mesajı kontrol ederek yeniden kuyruğa alın.</Text> : null}
         <View style={styles.detailsCard}>
           <Text style={styles.label}>Alıcı</Text>
@@ -192,14 +246,15 @@ export function SmsPreviewScreen({ navigation, route }: Props) {
               </>
             ) : (
               <>
-                <PrimaryButton title="Mesajı Düzenle" variant="secondary" onPress={() => setEditing(true)} />
+                <PrimaryButton title="Mesajı Düzenle" variant="secondary" disabled={sending} onPress={() => setEditing(true)} />
                 {status === 'PENDING' ? (
-                  <PrimaryButton title={addingToQueue ? 'Ekleniyor...' : 'Gönderilecekler Listesine Ekle'} onPress={() => { void addToOutgoingList(); }} disabled={addingToQueue} />
+                  <PrimaryButton title={addingToQueue ? 'Ekleniyor...' : 'Gönderilecekler Listesine Ekle'} onPress={() => { void addToOutgoingList(); }} disabled={addingToQueue || sending} />
                 ) : null}
               </>
             )}
           </View>
         ) : null}
+        {!editing && ['PENDING', 'QUEUED', 'FAILED'].includes(status) ? <PrimaryButton title={deleting ? 'Siliniyor...' : 'SMS kaydını sil'} variant="secondary" disabled={deleting || saving || addingToQueue || sending} onPress={confirmDeleteDraft} /> : null}
         {(status === 'UNKNOWN' || status === 'FAILED') ? (
           <View style={styles.actions}>
             {status === 'UNKNOWN' ? (
@@ -216,7 +271,7 @@ export function SmsPreviewScreen({ navigation, route }: Props) {
           </View>
         ) : null}
         <PrimaryButton title="SMS Merkezi'ne Dön" variant="secondary" onPress={() => navigation.goBack()} />
-        <Text style={styles.disclaimer}>Kuyruğa eklemek SMS göndermez. Gerçek SIM gönderimi SMS Merkezi'nden ayrıca onaylanır.</Text>
+        <Text style={styles.disclaimer}>Şimdi SMS gönder seçeneği bu telefonun SIM hattını kullanır. Operatör ücreti uygulanabilir.</Text>
       </ScrollView>
     </Screen>
   );

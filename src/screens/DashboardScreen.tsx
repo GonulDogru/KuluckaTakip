@@ -52,6 +52,7 @@ export function DashboardScreen() {
         <View style={styles.grid}><InfoCard title="Alınan yumurta" value={summary ? `${summary.eggs}` : '—'} /><InfoCard title="Kalan toplam borç" value={summary ? formatCurrency(summary.debt) : '—'} tone="warning" /></View>
         <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>Hızlı işlemler</Text><AppIcon name="plus" size={18} color={colors.textMuted} /></View>
         <View style={styles.grid}>{actions.map((action) => <Pressable key={action.title} accessibilityRole="button" onPress={action.onPress} style={({ pressed }) => [styles.action, pressed && styles.pressed]}><View style={[styles.actionIcon, action.red && styles.redIcon]}><AppIcon name={action.icon} color={action.red ? colors.red : colors.primary} /></View><Text style={styles.actionTitle}>{action.title}</Text><Text style={styles.actionSubtitle}>{action.subtitle}</Text></Pressable>)}</View>
+        <Pressable accessibilityRole="button" onPress={() => navigation.navigate('EggTypes')} style={styles.action}><Text style={styles.actionTitle}>Yumurta türlerini yönet</Text><Text style={styles.actionSubtitle}>Tür ekle, düzenle veya pasife al</Text></Pressable>
         <Text style={styles.footer}>Özenle takip et. Güvenle büyüt.</Text>
       </ScrollView>
     </Screen>

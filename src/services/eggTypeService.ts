@@ -41,8 +41,15 @@ export const eggTypeService = {
     return (data ?? []).map(mapEggType);
   },
 
+  async listAll() {
+    if (!isSupabaseConfigured || !supabase) return [...demoEggTypes];
+    const { data, error } = await supabase.from('egg_types').select('*').order('name');
+    if (error) throw error;
+    return (data ?? []).map(mapEggType);
+  },
+
   async getById(id: string) {
-    const eggTypes = await this.list();
+    const eggTypes = await this.listAll();
     return eggTypes.find((eggType) => eggType.id === id) ?? null;
   },
 
@@ -111,4 +118,4 @@ export const eggTypeService = {
   },
 };
 
-cacheReads(eggTypeService, 'eggType', ['list', 'getById', 'listBreeds']);
+cacheReads(eggTypeService, 'eggType', ['list', 'listAll', 'getById', 'listBreeds']);

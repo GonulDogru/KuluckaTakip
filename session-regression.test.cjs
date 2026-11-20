@@ -19,20 +19,21 @@ function load(file, mocks, globals = {}) {
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-function smsSupportHarness({ installed = true, capable = true, permission = 'granted' } = {}) {
+function smsSupportHarness({ installed = true, capable = true, permission = 'granted', rpc = async () => ({ error: null }), from = () => { throw new Error('Unexpected table read'); } } = {}) {
   const calls = { permission: 0, send: 0, claim: 0 };
   const native = installed ? {
     isAvailable() { return capable; }, async sendSms() { calls.send++; throw new Error('Physical send must not be invoked in this test'); },
   } : null;
   const module = load('modules/sim-sms/index.ts', { expo: { requireOptionalNativeModule: () => native } });
   const { smsService } = load('src/services/smsService.ts', {
-    '../lib/supabase': { isSupabaseConfigured: true, supabase: {} },
+    '../lib/supabase': { isSupabaseConfigured: true, supabase: { rpc, from } },
     'react-native': { Platform: { OS: 'android' }, PermissionsAndroid: {
       PERMISSIONS: { SEND_SMS: 'SEND_SMS' }, RESULTS: { GRANTED: 'granted', NEVER_ASK_AGAIN: 'never_ask_again' },
       async request() { calls.permission++; return permission; },
     } },
-    './customerService': {}, './eggTypeService': {}, '../utils/dateRules': {}, './mappers': {},
-    './dataEvents': {}, './smsDeviceIdentity': {}, '../../modules/sim-sms': module,
+    './customerService': {}, './eggTypeService': {}, './batchService': {}, './paymentService': {},
+    '../utils/money': load('src/utils/money.ts', {}), '../utils/dateRules': {}, './mappers': {},
+    './dataEvents': { emitDataChanged() {} }, './smsDeviceIdentity': {}, '../../modules/sim-sms': module,
     '../utils/phone': { normalizeTurkishPhone: () => '+905321234567' }, './readAllRows': {},
     '../utils/smsSignature': load('src/utils/smsSignature.ts', {}),
   });
@@ -40,6 +41,106 @@ function smsSupportHarness({ installed = true, capable = true, permission = 'gra
   smsService.claimSms = async () => { calls.claim++; throw new Error('Must not claim in a pre-send failure'); };
   return { module, service: smsService, calls };
 }
+
+test('acceptance SMS lookup queries only the requested batch', async () => {
+  const calls = [];
+  const query = {
+    select(columns) { calls.push(['select', columns]); return this; },
+    eq(column, value) { calls.push(['eq', column, value]); return this; },
+    order(column) { calls.push(['order', column]); return this; },
+    limit(value) { calls.push(['limit', value]); return this; },
+    async maybeSingle() { return { data: null, error: null }; },
+  };
+  const { service } = smsSupportHarness({ from: (table) => { calls.push(['from', table]); return query; } });
+  assert.equal(await service.getByBatchId('batch-1'), null);
+  assert.ok(calls.some((call) => call[0] === 'eq' && call[1] === 'batch_id' && call[2] === 'batch-1'));
+  assert.ok(calls.some((call) => call[0] === 'limit' && call[1] === 1));
+});
+
+test('send now queues a pending draft and immediately sends its confirmed content', async () => {
+  const { service } = smsSupportHarness();
+  const sms = { id: 'sms-1', status: 'PENDING', phone: '+905321234567', message: 'hello' };
+  const calls = [];
+  service.getById = async () => sms;
+  service.addToOutgoingList = async (id) => { calls.push(['queue', id]); return { sms: { ...sms, status: 'QUEUED' } }; };
+  service.sendQueuedSms = async (id, confirmation) => { calls.push(['send', id, confirmation.phone, confirmation.message]); return { status: 'sent' }; };
+  const result = await service.sendNow(sms);
+  assert.equal(result.status, 'sent');
+  assert.deepEqual(calls, [['queue', 'sms-1'], ['send', 'sms-1', sms.phone, sms.message]]);
+});
+
+test('send now stops when the draft changes while queuing', async () => {
+  const { service } = smsSupportHarness();
+  const sms = { id: 'sms-1', status: 'PENDING', phone: '+905321234567', message: 'old' };
+  let sent = false;
+  service.getById = async () => sms;
+  service.addToOutgoingList = async () => ({ sms: { ...sms, status: 'QUEUED', message: 'changed' } });
+  service.sendQueuedSms = async () => { sent = true; return { status: 'sent' }; };
+  const result = await service.sendNow(sms);
+  assert.equal(result.status, 'not_claimed');
+  assert.equal(sent, false);
+});
+
+test('explicit retry sends after resolving the same uncertain message', async () => {
+  const { service } = smsSupportHarness();
+  const sms = { id: 'sms-1', status: 'UNKNOWN', phone: '+905321234567', message: 'hello' };
+  let reads = 0, sent = false;
+  service.getById = async () => ++reads === 1 ? sms : { ...sms, status: 'PENDING' };
+  service.resolveSmsUncertain = async (id, resolution) => id === sms.id && resolution === 'retry';
+  service.sendNow = async (pending) => { sent = pending.status === 'PENDING'; return { status: 'sent' }; };
+  const result = await service.retryAndSend(sms);
+  assert.equal(result.status, 'sent');
+  assert.equal(sent, true);
+});
+
+test('explicit retry does not send when the message changes during resolution', async () => {
+  const { service } = smsSupportHarness();
+  const sms = { id: 'sms-1', status: 'UNKNOWN', phone: '+905321234567', message: 'old' };
+  let reads = 0, sent = false;
+  service.getById = async () => ++reads === 1 ? sms : { ...sms, status: 'PENDING', message: 'new' };
+  service.resolveSmsUncertain = async () => true;
+  service.sendNow = async () => { sent = true; return { status: 'sent' }; };
+  const result = await service.retryAndSend(sms);
+  assert.equal(result.status, 'not_claimed');
+  assert.equal(sent, false);
+});
+
+test('explicit retry stops if the uncertain message is no longer current', async () => {
+  const { service } = smsSupportHarness();
+  const sms = { id: 'sms-1', status: 'UNKNOWN', phone: '+905321234567', message: 'old' };
+  let resolved = false;
+  service.getById = async () => ({ ...sms, status: 'SENT' });
+  service.resolveSmsUncertain = async () => { resolved = true; return true; };
+  const result = await service.retryAndSend(sms);
+  assert.equal(result.status, 'not_claimed');
+  assert.equal(resolved, false);
+});
+
+test('send now never automatically retries an uncertain SMS', async () => {
+  const { service } = smsSupportHarness();
+  const sms = { id: 'sms-1', status: 'UNKNOWN', phone: '+905321234567', message: 'hello' };
+  let queued = false;
+  service.getById = async () => sms;
+  service.addToOutgoingList = async () => { queued = true; throw new Error('must not queue'); };
+  const result = await service.sendNow(sms);
+  assert.equal(result.status, 'not_claimed');
+  assert.equal(queued, false);
+});
+
+test('deleting an SMS draft sends the confirmed content to the server', async () => {
+  const calls = [];
+  const h = smsSupportHarness({ rpc: async (name, args) => { calls.push({ name, args }); return { error: null }; } });
+  await h.service.deleteDraft({ id: 'sms-1', status: 'QUEUED', message: 'confirmed', phone: '+905321234567' });
+  assert.equal(calls[0].name, 'delete_sms_draft');
+  assert.equal(calls[0].args.p_status, 'QUEUED');
+  assert.equal(calls[0].args.p_message, 'confirmed');
+  assert.equal(calls[0].args.p_phone, '+905321234567');
+});
+
+test('a server refusal to delete an SMS draft reaches the caller', async () => {
+  const h = smsSupportHarness({ rpc: async () => ({ error: new Error('SMS changed') }) });
+  await assert.rejects(h.service.deleteDraft({ id: 'sms-1', status: 'PENDING', message: 'old', phone: '123' }), /SMS changed/);
+});
 
 test('installed SMS module is distinguished from a device without SMS hardware', async () => {
   const h = smsSupportHarness({ capable: false });
@@ -354,7 +455,8 @@ function serviceHarness(file, exportName) {
     './queryCache': { cacheReads() {} },
     './readAllRows': load('src/services/readAllRows.ts', {}),
     './pendingOperation': {},
-    '../utils/dateRules': {}, './eggTypeService': {}, './smsService': {},
+    '../utils/dateRules': {}, './eggTypeService': {}, './smsService': {}, './paymentService': {},
+    './placementService': {}, './trayService': {}, './hatchBasketService': {},
   };
   return { service: load(file, mocks)[exportName], calls };
 }
@@ -484,7 +586,22 @@ test('release without server configuration cannot open the demo navigator', () =
   assert.equal(app.visible('View'), true);
 });
 
-test('focused refresh ignores unrelated events and refreshes on foreground', () => {
+test('payment updates invalidate payment and summary caches but retain egg types', async () => {
+  const cache = load('src/services/queryCache.ts', {});
+  const events = load('src/services/dataEvents.ts', { './queryCache': cache });
+  let eggReads = 0, paymentReads = 0, summaryReads = 0;
+  const egg = () => cache.cachedRead('eggType:list:[]', async () => ++eggReads);
+  const payment = () => cache.cachedRead('payment:list:[]', async () => ++paymentReads);
+  const summary = () => cache.cachedRead('customer:listWithSummary:[]', async () => ++summaryReads);
+  await Promise.all([egg(), payment(), summary()]);
+  events.emitDataChanged('payment');
+  await Promise.all([egg(), payment(), summary()]);
+  assert.equal(eggReads, 1);
+  assert.equal(paymentReads, 2);
+  assert.equal(summaryReads, 2);
+});
+
+test('focused refresh combines related events and refreshes on foreground', async () => {
   let refreshes = 0, clears = 0, dataListener, stateListener, cleanup, unsubscribed = false, removed = false;
   const { useFocusedRefresh } = load('src/hooks/useFocusedRefresh.ts', {
     react: { useCallback: fn => fn, useRef: value => ({ current: value }) },
@@ -498,7 +615,8 @@ test('focused refresh ignores unrelated events and refreshes on foreground', () 
   useFocusedRefresh(() => { refreshes++; }, ['batch', 'customer']);
   assert.equal(refreshes, 1);
   dataListener('sms'); assert.equal(refreshes, 1);
-  dataListener('batch'); assert.equal(refreshes, 2);
+  dataListener('batch'); dataListener('customer');
+  assert.equal(refreshes, 1); await tick(); assert.equal(refreshes, 2);
   stateListener('background'); stateListener('active');
   assert.equal(refreshes, 3); assert.equal(clears, 1);
   cleanup(); assert.equal(unsubscribed, true); assert.equal(removed, true);

@@ -43,6 +43,12 @@ function withUsage(trays: RackTray[], allocations: TrayAllocation[]): TrayWithUs
 }
 
 export const trayService = {
+  removeDemoByBatch(batchId: string) {
+    for (let i = allocationStore.length - 1; i >= 0; i--) {
+      if (allocationStore[i].batchId === batchId) allocationStore.splice(i, 1);
+    }
+  },
+
   async ensureRackTrays(rack: Rack) {
     const existing = trayStore.filter((tray) => tray.rackId === rack.id);
     if (existing.length || isSupabaseConfigured) return existing;

@@ -32,6 +32,12 @@ export function buildCellRange(rack: Rack, start: { row: number; position: numbe
 }
 
 export const placementService = {
+  removeDemoByBatch(batchId: string) {
+    for (let i = store.length - 1; i >= 0; i--) {
+      if (store[i].batchId === batchId) store.splice(i, 1);
+    }
+  },
+
   async list() {
     if (!isSupabaseConfigured || !supabase) return [...store];
     const { data, error } = await supabase.from('placement_cells').select('*').order('row_number').order('position_number');
